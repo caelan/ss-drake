@@ -52,40 +52,22 @@ def load_robot_from_urdf(urdf_file):
     return robot
 
 class DrakeVisualizerHelper:
-    def __init__(self, tree):
+    def __init__(self, tree, default_q=None):
         lcm = DrakeLcm()
         self.tree = tree
         self.visualizer = DrakeVisualizer(tree=self.tree, lcm=lcm, enable_playback=True)
-        self.x = np.concatenate([self.tree.getZeroConfiguration(), 
-                                 np.zeros(tree.get_num_velocities())])
+        if default_q is None:
+            default_q = self.tree.getZeroConfiguration()
+        self.x = np.concatenate([default_q, np.zeros(tree.get_num_velocities())])
         self.visualizer.PublishLoadRobot()
-        self.draw(self.tree.getZeroConfiguration())
+        self.draw(default_q)
 
-    def draw(self, q = None):
+    def draw(self, q=None):
         if q is not None:
-            self.x[:self.tree.get_num_positions()] = q
+            self.x[:self.tree.get_num_positions()] = q # Mutates
         context = self.visualizer.CreateDefaultContext()
         context.FixInputPort(0, BasicVector(self.x))
         self.visualizer.Publish(context)
-        
-    def inspect(self, slider_scaling = 1):
-        # Setup widgets
-        for i in range(self.tree.number_of_positions()):
-            widgets.interact(
-                self.__slider_callback,
-                slider_value = widgets.FloatSlider(
-                    value=slider_scaling * self.x[i],
-                    min=slider_scaling * self.tree.joint_limit_min[i],
-                    max=slider_scaling * self.tree.joint_limit_max[i],
-                    description=self.tree.get_position_name(i)
-                ),
-                index=widgets.fixed(i),
-                slider_scaling=widgets.fixed(slider_scaling)
-            )
-
-    def __slider_callback(self, slider_value, index, slider_scaling):
-        self.x[index] = slider_value / slider_scaling
-        self.draw()
 
 BASE_POSITIONS = ['base_x', 'base_y', 'base_z']
 
@@ -175,9 +157,8 @@ def main():
         print(arm, arm_positions(robot, arm))
         print(arm, gripper_positions(robot, arm))
 
-    vis_helper.inspect(np.rad2deg(1))
-
-
+    # KinematicsCache
+    # http://drake.mit.edu/doxygen_cxx/class_kinematics_cache.html
 
 if __name__ == '__main__':
     main()
