@@ -23,6 +23,21 @@ from pydrake.systems.framework import BasicVector, DiagramBuilder
 # TODO(eric.cousineau): Use `unittest` (after moving `ik` into `multibody`),
 # declaring this as a drake_py_unittest in the BUILD.bazel file.
 
+def pose_from_point_euler(point, euler):
+    return np.concatenate([point, euler])
+
+def euler_from_theta(theta):
+    return np.array([0, 0, theta])
+
+def Point():
+    return np.zeros(3)
+
+def Euler():
+    return np.zeros(3)
+
+def Pose():
+    return np.concatenate([unit_point(), unit_euler()])
+
 
 def add_model(tree, model_file, fixed_base=True):
     model_string = open(model_file).read()
@@ -30,19 +45,21 @@ def add_model(tree, model_file, fixed_base=True):
     package_map = PackageMap()
     weld_frame = None
     base_type = FloatingBaseType.kFixed if fixed_base else FloatingBaseType.kRollPitchYaw
-
+    #base_type = FloatingBaseType.kQuaternion
 
     if model_file.endswith('.urdf'):
         AddModelInstanceFromUrdfStringSearchingInRosPackages(
-            urdf_string, package_map,
+            model_string, package_map,
             base_dir, base_type,
             weld_frame, tree)
     elif model_file.endswith('.sdf'):
-        AddModelInstancesFromSdfStringSearchingInRosPackages(model_string, package_map, 
+        AddModelInstancesFromSdfStringSearchingInRosPackages(
+          model_string, package_map, 
           base_type, weld_frame, tree)
         #AddModelInstancesFromSdfString(model_string, base_type, weld_frame, tree) 
     else:
         raise ValueError(model_file)
+    return tree
 
 
 def load_robot_from_urdf(urdf_file, fixed_base=True):
@@ -57,22 +74,12 @@ def load_robot_from_urdf(urdf_file, fixed_base=True):
     """
     # PR2 has explicit base joints
 
-    urdf_string = open(urdf_file).read()
-    base_dir = os.path.dirname(urdf_file)
-    package_map = PackageMap()
-    weld_frame = None
-    floating_base_type = FloatingBaseType.kFixed if fixed_base else FloatingBaseType.kRollPitchYaw
-
     # Load our model from URDF
     robot = RigidBodyTree()
+    add_model(robot, urdf_file, fixed_base=fixed_base)
 
-    AddModelInstanceFromUrdfStringSearchingInRosPackages(
-        urdf_string,
-        package_map,
-        base_dir,
-        floating_base_type,
-        weld_frame,
-        robot)
+    #robot = RigidBodyTree(urdf_file, '0' if fixed_base else '1')
+    #robot = RigidBodyTree(urdf_file)
 
     return robot
 
@@ -184,18 +191,9 @@ def main():
       "examples/kuka_iiwa_arm/dev/box_rotation/models/", 
       "box.urdf")
 
-    base_type = FloatingBaseType.kFixed
-    #base_type = FloatingBaseType.kRollPitchYaw
-    #base_type = FloatingBaseType.kQuaternion
-
     print(table_file)
-    #AddModelInstancesFromSdfString(table_file, FloatingBaseType.kRollPitchYaw, None, robot) 
-    table_xml = open(table_file).read()
-    #print(table_xml)
-    #AddModelInstancesFromSdfStringSearchingInRosPackages(table_xml, PackageMap(), 
-    #  base_type, None, robot)
-    AddModelInstancesFromSdfString(table_xml, base_type, None, robot) 
 
+    add_model(robot, table_file, fixed_base=True)
     #AddFlatTerrainToWorld(robot)
     print_tree_info(robot)
 
