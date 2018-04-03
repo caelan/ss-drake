@@ -6,6 +6,8 @@ import pydrake
 from pydrake.multibody.parsers import PackageMap
 from pydrake.multibody.rigid_body_tree import (
     AddModelInstanceFromUrdfStringSearchingInRosPackages,
+    AddModelInstancesFromSdfString,
+    AddModelInstancesFromSdfStringSearchingInRosPackages,
     FloatingBaseType,
     RigidBodyFrame,
     RigidBodyTree,
@@ -22,7 +24,28 @@ from pydrake.systems.framework import BasicVector, DiagramBuilder
 # declaring this as a drake_py_unittest in the BUILD.bazel file.
 
 
-def load_robot_from_urdf(urdf_file):
+def add_model(tree, model_file, fixed_base=True):
+    model_string = open(model_file).read()
+    base_dir = os.path.dirname(model_file)
+    package_map = PackageMap()
+    weld_frame = None
+    base_type = FloatingBaseType.kFixed if fixed_base else FloatingBaseType.kRollPitchYaw
+
+
+    if model_file.endswith('.urdf'):
+        AddModelInstanceFromUrdfStringSearchingInRosPackages(
+            urdf_string, package_map,
+            base_dir, base_type,
+            weld_frame, tree)
+    elif model_file.endswith('.sdf'):
+        AddModelInstancesFromSdfStringSearchingInRosPackages(model_string, package_map, 
+          base_type, weld_frame, tree)
+        #AddModelInstancesFromSdfString(model_string, base_type, weld_frame, tree) 
+    else:
+        raise ValueError(model_file)
+
+
+def load_robot_from_urdf(urdf_file, fixed_base=True):
     """
     This function demonstrates how to pass a complete
     set of arguments to Drake's URDF parser.  It is also
@@ -32,11 +55,13 @@ def load_robot_from_urdf(urdf_file):
       robot = RigidBodyTree(urdf_file)
 
     """
+    # PR2 has explicit base joints
+
     urdf_string = open(urdf_file).read()
     base_dir = os.path.dirname(urdf_file)
     package_map = PackageMap()
     weld_frame = None
-    floating_base_type = FloatingBaseType.kRollPitchYaw
+    floating_base_type = FloatingBaseType.kFixed if fixed_base else FloatingBaseType.kRollPitchYaw
 
     # Load our model from URDF
     robot = RigidBodyTree()
@@ -117,32 +142,71 @@ def arm_positions(tree, arm):
     return tuple(i for i in xrange(tree.number_of_positions()) 
         if name_from_position(tree, i).startswith(prefix_from_arm[arm]) and (i not in gripper_positions(tree, arm)))
 
-def main():
-    urdf_file = os.path.join(
-        pydrake.getDrakePath(),
-        "examples/pr2/models/pr2_description/urdf/pr2_simplified.urdf")
-
-    # Load our model from URDF
-    robot = load_robot_from_urdf(urdf_file)
-
-    AddFlatTerrainToWorld(robot)
+def print_tree_info(robot):
     print("Positions:", robot.get_num_positions()) # 34 | number_of_positions
     print("Velocities:", robot.get_num_velocities()) # 34 | number_of_velocities
     print("Actuators:", robot.get_num_actuators()) # 28
     print("Frames:", robot.get_num_frames()) # 86
     print("Bodies:", robot.get_num_bodies()) # 86
     world = robot.world()
-    print("Robot:", robot) # RigidBodyTree
+    print("Tree:", robot) # RigidBodyTree
     print("World:", world) # RigidBody
-    print(world.get_name(), world.get_visual_elements()) # List of visual elements
+    print(world.get_name(), "elements:", world.get_visual_elements()) # List of visual elements
+
+    # Geometry
+    # getFaces
+    # getShape
+    # getPoints
+    # getBoundingBoxPoints
+
+    # Element
+    # getGeometry
+    # getLocalTransform
+
+    # RigidBody
+    # get_visual_elements
+
+def main():
+    urdf_file = os.path.join(pydrake.getDrakePath(),
+        "examples/pr2/models/pr2_description/urdf/pr2_simplified.urdf")
+
+    # Load our model from URDF
+    robot = load_robot_from_urdf(urdf_file)
+    print_tree_info(robot)
+
+    table_file = os.path.join(pydrake.getDrakePath(), 
+      "examples/kuka_iiwa_arm/models/table/",
+      "extra_heavy_duty_table_surface_only_collision.sdf")
+    large_table_file = os.path.join(pydrake.getDrakePath(), 
+      "examples/kuka_iiwa_arm/dev/box_rotation/models/",
+      "large_extra_heavy_duty_table_surface_only_collision.sdf")
+    box_file = os.path.join(pydrake.getDrakePath(), 
+      "examples/kuka_iiwa_arm/dev/box_rotation/models/", 
+      "box.urdf")
+
+    base_type = FloatingBaseType.kFixed
+    #base_type = FloatingBaseType.kRollPitchYaw
+    #base_type = FloatingBaseType.kQuaternion
+
+    print(table_file)
+    #AddModelInstancesFromSdfString(table_file, FloatingBaseType.kRollPitchYaw, None, robot) 
+    table_xml = open(table_file).read()
+    #print(table_xml)
+    #AddModelInstancesFromSdfStringSearchingInRosPackages(table_xml, PackageMap(), 
+    #  base_type, None, robot)
+    AddModelInstancesFromSdfString(table_xml, base_type, None, robot) 
+
+    #AddFlatTerrainToWorld(robot)
+    print_tree_info(robot)
+
 
     vis_helper = DrakeVisualizerHelper(robot)
-    #q = robot.getRandomConfiguration()
-    q = robot.getZeroConfiguration()
+    q = robot.getRandomConfiguration()
+    #q = robot.getZeroConfiguration()
     vis_helper.draw(q)
     print("Conf", q)
 
-    print(robot.getTerrainContactPoints(world))
+    print(robot.getTerrainContactPoints(robot.world()))
 
     print(robot.joint_limit_min.shape, robot.joint_limit_max.shape)
     print(robot.joint_limit_min, robot.joint_limit_max)
