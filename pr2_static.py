@@ -23,27 +23,43 @@ from pydrake.systems.framework import BasicVector, DiagramBuilder
 # TODO(eric.cousineau): Use `unittest` (after moving `ik` into `multibody`),
 # declaring this as a drake_py_unittest in the BUILD.bazel file.
 
-def pose_from_point_euler(point, euler):
+def Point(x=0, y=0, z=0):
+    return np.array([x, y, z])
+
+def Euler(roll=0, pitch=0, yaw=0):
+    return np.array([roll, pitch, yaw])
+
+def Pose(point=None, euler=None):
+    point = Point() if point is None else point
+    euler = Euler() if euler is None else euler
     return np.concatenate([point, euler])
 
-def euler_from_theta(theta):
-    return np.array([0, 0, theta])
+def point_from_pose(pose):
+    return pose[:3]
 
-def Point():
-    return np.zeros(3)
+def euler_from_pose(pose):
+    return pose[3:]
 
-def Euler():
-    return np.zeros(3)
+def point_euler_from_pose(pose):
+    return point_from_pose(pose), euler_from_pose(pose)
 
-def Pose():
-    return np.concatenate([unit_point(), unit_euler()])
-
-
-def add_model(tree, model_file, fixed_base=True):
+def add_model(tree, model_file, name='link', fixed_base=True, weld_frame=None):
     model_string = open(model_file).read()
     base_dir = os.path.dirname(model_file)
     package_map = PackageMap()
-    weld_frame = None
+
+    #if isinstance(weld_frame, np.ndarray):
+    #    frame_name = 
+
+    frame = RigidBodyFrame(name, get_world(tree), Pose()) # point, euler
+
+    #robot.addFrame(RigidBodyFrame(
+    #"r_hand_frame", robot.FindBody("r_gripper_palm_link"),
+    #np.array([0.1, 0, 0]), np.array([0., 0, 0])))
+
+
+
+
     base_type = FloatingBaseType.kFixed if fixed_base else FloatingBaseType.kRollPitchYaw
     #base_type = FloatingBaseType.kQuaternion
 
@@ -110,6 +126,49 @@ POSITION_NAMES = ['base_x', 'base_y', 'base_z', 'base_roll', 'base_pitch', 'base
   'l_shoulder_pan_joint', 'l_shoulder_lift_joint', 'l_upper_arm_roll_joint', 'l_elbow_flex_joint', 'l_forearm_roll_joint', 'l_wrist_flex_joint', 'l_wrist_roll_joint', 
   'l_gripper_l_finger_joint', 'l_gripper_r_finger_joint', 'l_gripper_l_finger_tip_joint', 'l_gripper_r_finger_tip_joint']
 
+##################################################
+
+def get_frame_indices(tree):
+    return range(tree.get_num_frames())
+
+def get_body_indices(tree):
+    return range(tree.get_num_bodies())
+
+def body_name_from_index(tree, index):
+    return tree.getBodyOrFrameName(index)
+
+frame_name_from_index = body_name_from_index # frame_name == body_name
+
+def get_bodies(tree):
+    return [tree.get_body(index) for index in get_body_indices(tree)]
+
+def get_body_names(tree):
+    
+    return [body.get_name() for body in get_bodies(tree)]
+    #return [tree.getBodyOrFrameName(index) for index in get_body_indices(tree)]
+
+get_frame_names = get_body_names
+
+def body_from_name(tree, name):
+    return tree.FindBody(name)
+
+def frame_from_name(tree, name):
+    return tree.findFrame(name)
+
+def name_from_body(body):
+    return body.get_name()
+
+name_from_frame = name_from_body
+
+def index_from_frame(frame):
+    return frame.get_frame_index()
+
+def get_world(tree):
+    #assert(tree.world() is tree.get_body(0))
+    return tree.world()
+
+##################################################
+
 def get_positions(tree):
     return range(tree.number_of_positions())
 
@@ -160,6 +219,10 @@ def print_tree_info(robot):
     print("World:", world) # RigidBody
     print(world.get_name(), "elements:", world.get_visual_elements()) # List of visual elements
 
+    for body_index in get_body_indices(robot):
+        body = robot.get_body(body_index)
+        print(body_index, robot.getBodyOrFrameName(body_index), body.get_name())
+
     # Geometry
     # getFaces
     # getShape
@@ -178,7 +241,11 @@ def main():
         "examples/pr2/models/pr2_description/urdf/pr2_simplified.urdf")
 
     # Load our model from URDF
-    robot = load_robot_from_urdf(urdf_file)
+
+    robot = RigidBodyTree()
+    print_tree_info(robot)
+
+    add_model(robot, urdf_file)
     print_tree_info(robot)
 
     table_file = os.path.join(pydrake.getDrakePath(), 
