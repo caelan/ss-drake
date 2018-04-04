@@ -23,6 +23,24 @@ from pydrake.systems.framework import BasicVector, DiagramBuilder
 # TODO(eric.cousineau): Use `unittest` (after moving `ik` into `multibody`),
 # declaring this as a drake_py_unittest in the BUILD.bazel file.
 
+#Body = namedtuple('Body', ['tree', ''])
+
+class Body(object):
+    def __init__(self, tree, name, fixed, start_frame, start_position):
+        self.tree = tree
+        self.name = name
+        self.fixed = fixed
+        self.start_frame = start_frame
+        self.num_frames = self.tree.get_num_frames() - self.start_frame
+        self.start_position = start_position
+        self.num_positions = self.tree.get_num_positions() - self.start_position
+    def get_frames(self):
+        return [get_frame(tree, index) for index in xrange(self.start_frame, self.num_frames)]
+    def get_bodies(self):
+        return [get_body(tree, index) for index in xrange(self.start_frame, self.num_frames)]
+    def get_positions(self):
+        return range(self.start_position, self.num_positions)
+
 def Point(x=0, y=0, z=0):
     return np.array([x, y, z])
 
@@ -43,26 +61,26 @@ def euler_from_pose(pose):
 def point_euler_from_pose(pose):
     return point_from_pose(pose), euler_from_pose(pose)
 
-def add_model(tree, model_file, name='link', fixed_base=True, weld_frame=None):
+def add_model(tree, model_file, name='frame', pose=None, fixed=True, weld_frame=None):
     model_string = open(model_file).read()
     base_dir = os.path.dirname(model_file)
     package_map = PackageMap()
 
     #if isinstance(weld_frame, np.ndarray):
     #    frame_name = 
+    if pose is not None:
+        # TODO: the body name is still frame
+        #name = 'frame'
+        pose = Pose() if pose is None else pose
+        frame = RigidBodyFrame(name, get_world(tree), pose) # point, euler
+        print(name_from_frame(frame), frame)
+        weld_frame = frame
 
-    frame = RigidBodyFrame(name, get_world(tree), Pose()) # point, euler
-
-    #robot.addFrame(RigidBodyFrame(
-    #"r_hand_frame", robot.FindBody("r_gripper_palm_link"),
-    #np.array([0.1, 0, 0]), np.array([0., 0, 0])))
-
-
-
-
-    base_type = FloatingBaseType.kFixed if fixed_base else FloatingBaseType.kRollPitchYaw
+    base_type = FloatingBaseType.kFixed if fixed else FloatingBaseType.kRollPitchYaw
     #base_type = FloatingBaseType.kQuaternion
 
+    start_frame = tree.get_num_frames()
+    start_position = tree.get_num_positions()
     if model_file.endswith('.urdf'):
         AddModelInstanceFromUrdfStringSearchingInRosPackages(
             model_string, package_map,
@@ -75,28 +93,18 @@ def add_model(tree, model_file, name='link', fixed_base=True, weld_frame=None):
         #AddModelInstancesFromSdfString(model_string, base_type, weld_frame, tree) 
     else:
         raise ValueError(model_file)
-    return tree
+    return Body(tree, name, fixed, start_frame, start_position)
+    # TODO: return all frames or just base frame?
 
 
 def load_robot_from_urdf(urdf_file, fixed_base=True):
-    """
-    This function demonstrates how to pass a complete
-    set of arguments to Drake's URDF parser.  It is also
-    possible to load a robot with a much simpler syntax
-    that uses default values, such as:
-
-      robot = RigidBodyTree(urdf_file)
-
-    """
     # PR2 has explicit base joints
-
     # Load our model from URDF
     robot = RigidBodyTree()
     add_model(robot, urdf_file, fixed_base=fixed_base)
 
     #robot = RigidBodyTree(urdf_file, '0' if fixed_base else '1')
     #robot = RigidBodyTree(urdf_file)
-
     return robot
 
 class DrakeVisualizerHelper:
@@ -128,6 +136,8 @@ POSITION_NAMES = ['base_x', 'base_y', 'base_z', 'base_roll', 'base_pitch', 'base
 
 ##################################################
 
+# Body names don't have to be unique
+
 def get_frame_indices(tree):
     return range(tree.get_num_frames())
 
@@ -139,11 +149,13 @@ def body_name_from_index(tree, index):
 
 frame_name_from_index = body_name_from_index # frame_name == body_name
 
+def body_from_index(tree, index):
+    return tree.get_body(index)
+
 def get_bodies(tree):
-    return [tree.get_body(index) for index in get_body_indices(tree)]
+    return [body_from_index(tree, index) for index in get_body_indices(tree)]
 
 def get_body_names(tree):
-    
     return [body.get_name() for body in get_bodies(tree)]
     #return [tree.getBodyOrFrameName(index) for index in get_body_indices(tree)]
 
@@ -170,7 +182,7 @@ def get_world(tree):
 ##################################################
 
 def get_positions(tree):
-    return range(tree.number_of_positions())
+    return range(tree.number_of_positions()) # get_num_positions
 
 def get_position_names(tree):
     return [name_from_position(tree, i) for i in get_positions(tree)]
@@ -219,9 +231,12 @@ def print_tree_info(robot):
     print("World:", world) # RigidBody
     print(world.get_name(), "elements:", world.get_visual_elements()) # List of visual elements
 
+    kin_cache = get_kin_cache(robot, robot.getZeroConfiguration())
+    print(kin_cache)
     for body_index in get_body_indices(robot):
         body = robot.get_body(body_index)
         print(body_index, robot.getBodyOrFrameName(body_index), body.get_name())
+        print(get_world_pose(robot, kin_cache, body_index))
 
     # Geometry
     # getFaces
@@ -236,6 +251,14 @@ def print_tree_info(robot):
     # RigidBody
     # get_visual_elements
 
+def get_kin_cache(tree, q):
+    return tree.doKinematics(q)
+
+def get_world_pose(tree, kin_cache, body_index):
+    base_index = 0
+    #return tree.relativeTransform(kin_cache, base_index, body_index)
+    return tree.CalcBodyPoseInWorldFrame(kin_cache, body_from_index(tree, body_index))
+
 def main():
     urdf_file = os.path.join(pydrake.getDrakePath(),
         "examples/pr2/models/pr2_description/urdf/pr2_simplified.urdf")
@@ -243,25 +266,33 @@ def main():
     # Load our model from URDF
 
     robot = RigidBodyTree()
-    print_tree_info(robot)
+    #print_tree_info(robot)
 
-    add_model(robot, urdf_file)
+    #add_model(robot, urdf_file, pose=Pose())
+    add_model(robot, urdf_file, name='test', pose=Pose())
+
     print_tree_info(robot)
 
     table_file = os.path.join(pydrake.getDrakePath(), 
       "examples/kuka_iiwa_arm/models/table/",
       "extra_heavy_duty_table_surface_only_collision.sdf")
-    large_table_file = os.path.join(pydrake.getDrakePath(), 
-      "examples/kuka_iiwa_arm/dev/box_rotation/models/",
-      "large_extra_heavy_duty_table_surface_only_collision.sdf")
+    #large_table_file = os.path.join(pydrake.getDrakePath(), 
+    #  "examples/kuka_iiwa_arm/dev/box_rotation/models/",
+    #  "large_extra_heavy_duty_table_surface_only_collision.sdf")
     box_file = os.path.join(pydrake.getDrakePath(), 
-      "examples/kuka_iiwa_arm/dev/box_rotation/models/", 
-      "box.urdf")
+      "examples/kuka_iiwa_arm/models/objects/", 
+      "block_for_pick_and_place_mid_size.urdf")
 
     print(table_file)
 
-    add_model(robot, table_file, fixed_base=True)
+    add_model(robot, table_file, name='table1', pose=Pose(Point(2, 0, 0)), fixed=True)
+    add_model(robot, table_file, name='table2', pose=Pose(Point(-2, 0, 0)), fixed=True)
+    add_model(robot, box_file, name='box1', pose=Pose(), fixed=False)
+
+
     #AddFlatTerrainToWorld(robot)
+    AddFlatTerrainToWorld(robot, box_size=10, box_depth=.1)
+
     print_tree_info(robot)
 
 
@@ -288,6 +319,8 @@ def main():
 
     # KinematicsCache
     # http://drake.mit.edu/doxygen_cxx/class_kinematics_cache.html
+
+    # http://drake.mit.edu/doxygen_cxx/group__collision__concepts.html
 
 if __name__ == '__main__':
     main()
