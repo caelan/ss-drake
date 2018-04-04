@@ -170,6 +170,7 @@ def frame_from_name(tree, name):
 def name_from_body(body):
     return body.get_name()
 
+get_name = name_from_body
 name_from_frame = name_from_body
 
 def index_from_frame(frame):
@@ -178,6 +179,42 @@ def index_from_frame(frame):
 def get_world(tree):
     #assert(tree.world() is tree.get_body(0))
     return tree.world()
+
+def get_model_indices(tree):
+    return range(tree.get_num_model_instances())
+
+def bodies_from_model_index(tree, model_index):
+    return tree.FindModelInstanceBodies(model_index)
+
+def base_bodies_from_model_index(tree, model_index=-1):
+    return [body_from_index(tree, body_index) for body_index in tree.FindBaseBodies(model_id=model_index)]
+
+def get_model_base(tree, model_index):
+    base_bodies = base_bodies_from_model_index(tree, model_index)
+    #assert(len(base_bodies) == 1) # TODO: should do this
+    return base_bodies[0]
+
+def get_pose_positions(tree, model_index):
+    base_body = get_model_base(tree, model_index)
+    return range(base_body.get_position_start_index(), 
+        base_body.get_position_start_index() + base_body.get_num_positions())
+
+def model_name_from_index(tree, model_index):
+    bodies = base_bodies_from_model_index(tree, model_index)
+    #print(map(get_name, bodies)) # [u'world_link', u'r_gripper_l_finger_tip_frame', u'l_gripper_l_finger_tip_frame']
+    return bodies[0].get_model_name()
+
+def is_fixed(tree, model_index):
+    base_body = base_bodies_from_model_index(tree, model_index)[0]
+    return base_body.IsRigidlyFixedToWorld()
+
+def get_pose(tree, q, model_index):
+    positions = get_pose_positions(tree, model_index)
+    return q[positions]
+
+def set_pose(tree, q, model_index, pose):
+    positions = get_pose_positions(tree, model_index)
+    q[positions] = pose
 
 ##################################################
 
@@ -221,7 +258,7 @@ def arm_positions(tree, arm):
         if name_from_position(tree, i).startswith(prefix_from_arm[arm]) and (i not in gripper_positions(tree, arm)))
 
 def print_tree_info(robot):
-    print("Models:", robot.get_num_model_instances())
+    print("Models:", robot.get_num_model_instances()) # Doesn't include manually added
     print("Positions:", robot.get_num_positions()) # 34 | number_of_positions
     print("Velocities:", robot.get_num_velocities()) # 34 | number_of_velocities
     print("Actuators:", robot.get_num_actuators()) # 28
@@ -231,6 +268,15 @@ def print_tree_info(robot):
     print("Tree:", robot) # RigidBodyTree
     print("World:", world) # RigidBody
     print(world.get_name(), "elements:", world.get_visual_elements()) # List of visual elements
+
+    q0 = robot.getZeroConfiguration()
+    for index in get_model_indices(robot):
+        print(index, model_name_from_index(robot, index), is_fixed(robot, index), get_pose(robot, q0, index))
+
+    for body in get_bodies(robot):
+        print(body.get_name(), body.get_position_start_index(), body.get_num_positions(), #body.get_joint_name(),
+            body.has_joint(), body.has_parent_body(), body.IsRigidlyFixedToWorld(), body.get_parent() == robot.world()) #, body.get_parent()) # None if no parent
+
 
     kin_cache = get_kin_cache(robot, robot.getZeroConfiguration())
     print(kin_cache)
@@ -260,6 +306,15 @@ def get_world_pose(tree, kin_cache, body_index):
     #return tree.relativeTransform(kin_cache, base_index, body_index)
     return tree.CalcBodyPoseInWorldFrame(kin_cache, body_from_index(tree, body_index))
 
+# TODO: self-collisions for pr2
+# TODO: filter collisions
+
+def sample_configuration(tree, positions=None):
+    q = tree.getRandomConfiguration()
+    if positions is None:
+        return q
+    return q[positions]
+
 def main():
     urdf_file = os.path.join(pydrake.getDrakePath(),
         "examples/pr2/models/pr2_description/urdf/pr2_simplified.urdf")
@@ -276,11 +331,11 @@ def main():
     #add_model(robot, urdf_file, pose=Pose())
     add_model(robot, urdf_file, name='test', pose=Pose())
     print_tree_info(robot)
-    vis_helper = DrakeVisualizerHelper(robot)
 
+    """
+    vis_helper = DrakeVisualizerHelper(robot)
     q0 = robot.getZeroConfiguration()
     vis_helper.draw(q0)
-
     #indices = []
     indices = get_body_indices(robot)
     result = robot.collisionDetect(get_kin_cache(robot, q0), indices, True)
@@ -299,8 +354,8 @@ def main():
         body2 = body_from_index(robot, j)
         print(body1.get_name(), body2.get_name(), 
             body1.adjacentTo(body2), body1.CanCollideWith(body2))
-
     return
+    """
 
     table_file = os.path.join(pydrake.getDrakePath(), 
       "examples/kuka_iiwa_arm/models/table/",
@@ -315,7 +370,7 @@ def main():
     print(table_file)
 
     add_model(robot, table_file, name='table1', pose=Pose(Point(2, 0, 0)), fixed=False)
-    add_model(robot, table_file, name='table2', pose=Pose(Point(-2, 0, 0)), fixed=False)
+    add_model(robot, table_file, name='table2', pose=Pose(Point(-2, 0, 0)), fixed=True)
     #add_model(robot, box_file, name='box1', pose=Pose(), fixed=False)
     #add_model(robot, box_file, name='box2', pose=Pose(), fixed=False)
 
@@ -324,8 +379,8 @@ def main():
 
 
     #AddFlatTerrainToWorld(robot)
-    #AddFlatTerrainToWorld(robot, box_size=10, box_depth=.1)
-    #print_tree_info(robot)
+    AddFlatTerrainToWorld(robot, box_size=10, box_depth=.1) # Adds visual & collision
+    print_tree_info(robot)
 
     vis_helper = DrakeVisualizerHelper(robot)
     #q = robot.getRandomConfiguration()
