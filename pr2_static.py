@@ -221,6 +221,7 @@ def arm_positions(tree, arm):
         if name_from_position(tree, i).startswith(prefix_from_arm[arm]) and (i not in gripper_positions(tree, arm)))
 
 def print_tree_info(robot):
+    print("Models:", robot.get_num_model_instances())
     print("Positions:", robot.get_num_positions()) # 34 | number_of_positions
     print("Velocities:", robot.get_num_velocities()) # 34 | number_of_velocities
     print("Actuators:", robot.get_num_actuators()) # 28
@@ -233,10 +234,10 @@ def print_tree_info(robot):
 
     kin_cache = get_kin_cache(robot, robot.getZeroConfiguration())
     print(kin_cache)
-    for body_index in get_body_indices(robot):
-        body = robot.get_body(body_index)
-        print(body_index, robot.getBodyOrFrameName(body_index), body.get_name())
-        print(get_world_pose(robot, kin_cache, body_index))
+    #for body_index in get_body_indices(robot):
+    #    body = robot.get_body(body_index)
+    #    print(body_index, robot.getBodyOrFrameName(body_index), body.get_name())
+    #    print(get_world_pose(robot, kin_cache, body_index))
 
     # Geometry
     # getFaces
@@ -268,10 +269,38 @@ def main():
     robot = RigidBodyTree()
     #print_tree_info(robot)
 
+    # TODO: can define a collision clique for each body or something
+
+
+
     #add_model(robot, urdf_file, pose=Pose())
     add_model(robot, urdf_file, name='test', pose=Pose())
-
     print_tree_info(robot)
+    vis_helper = DrakeVisualizerHelper(robot)
+
+    q0 = robot.getZeroConfiguration()
+    vis_helper.draw(q0)
+
+    #indices = []
+    indices = get_body_indices(robot)
+    result = robot.collisionDetect(get_kin_cache(robot, q0), indices, True)
+    #print(result)
+    #bodyA_idx, bodyB_idx = result
+    phi, bodyA_idx, bodyB_idx = result
+    print(len(bodyA_idx), len(bodyB_idx))
+    print(len(indices))
+
+    colliding = {(i, j) for d, i, j in zip(phi, bodyA_idx, bodyB_idx) if d < 1e-3}
+    print(len(colliding))
+    for i, j in colliding:
+        body1 = body_from_index(robot, i)
+        #print(body1.get_group_to_collision_ids_map()) # {u'non_gripper': [43871920]}
+        #print(body1.get_collision_element_ids()) # [32922240]
+        body2 = body_from_index(robot, j)
+        print(body1.get_name(), body2.get_name(), 
+            body1.adjacentTo(body2), body1.CanCollideWith(body2))
+
+    return
 
     table_file = os.path.join(pydrake.getDrakePath(), 
       "examples/kuka_iiwa_arm/models/table/",
@@ -285,20 +314,34 @@ def main():
 
     print(table_file)
 
-    add_model(robot, table_file, name='table1', pose=Pose(Point(2, 0, 0)), fixed=True)
-    add_model(robot, table_file, name='table2', pose=Pose(Point(-2, 0, 0)), fixed=True)
-    add_model(robot, box_file, name='box1', pose=Pose(), fixed=False)
+    add_model(robot, table_file, name='table1', pose=Pose(Point(2, 0, 0)), fixed=False)
+    add_model(robot, table_file, name='table2', pose=Pose(Point(-2, 0, 0)), fixed=False)
+    #add_model(robot, box_file, name='box1', pose=Pose(), fixed=False)
+    #add_model(robot, box_file, name='box2', pose=Pose(), fixed=False)
+
+    # https://github.com/kth-ros-pkg/pr2_ft_moveit_config
+    # https://github.com/kth-ros-pkg/pr2_ft_moveit_config/blob/hydro/config/pr2.srdf
 
 
     #AddFlatTerrainToWorld(robot)
-    AddFlatTerrainToWorld(robot, box_size=10, box_depth=.1)
-
-    print_tree_info(robot)
-
+    #AddFlatTerrainToWorld(robot, box_size=10, box_depth=.1)
+    #print_tree_info(robot)
 
     vis_helper = DrakeVisualizerHelper(robot)
-    q = robot.getRandomConfiguration()
-    #q = robot.getZeroConfiguration()
+    #q = robot.getRandomConfiguration()
+    q = robot.getZeroConfiguration()
+    while True:
+      vis_helper.draw(q)
+      colliding = robot.collisionDetect(get_kin_cache(robot, q), get_body_indices(robot), True)
+      #if not colliding:
+      #    break
+      if colliding:
+          break
+      print("Colliding: ", colliding)
+      #raw_input("Continue?")
+      q = robot.getRandomConfiguration()
+      #print(q)
+    
     vis_helper.draw(q)
     print("Conf", q)
 
