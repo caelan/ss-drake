@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+import re
 import os
 import numpy as np
 import pydrake
@@ -222,6 +223,7 @@ def add_model(tree, model_file, pose=None, fixed_base=True):
 
     if model_file.endswith('.urdf'):
         base_dir = os.path.dirname(model_file)
+        #base_dir = pydrake.getDrakePath()
         AddModelInstanceFromUrdfStringSearchingInRosPackages(
             model_string, package_map,
             base_dir, base_type,
@@ -337,7 +339,7 @@ def supports_body(top_body, bottom_body, epsilon=1e-2): # TODO: above / below
     return (bottom_z_max <= top_z_min <= (bottom_z_max + epsilon)) and \
            (aabb_contains(aabb2d_from_aabb(top_aabb), aabb2d_from_aabb(bottom_aabb)))
 
-def sample_placement(tree, object_id, surface_id, max_attempts=50):
+def sample_placement(tree, object_id, surface_id, max_attempts=50, epsilon=1e-3):
     # TODO: could also just do with center of mass
     #com = tree.centerOfMass(tree.doKinematics(Conf()), object_id)
     for _ in xrange(max_attempts):
@@ -353,17 +355,56 @@ def sample_placement(tree, object_id, surface_id, max_attempts=50):
         if np.any(upper < lower):
           continue
         [x, y] = np.random.uniform(lower, upper)
-        z = (get_aabb_max(surface_aabb) + get_aabb_extent(object_aabb))[2]
+        z = (get_aabb_max(surface_aabb) + get_aabb_extent(object_aabb))[2] + epsilon
         point = Point(x, y, z) - get_aabb_center(object_aabb)
         return Pose(point, euler)
     return None
 
+
+def colliding_bodies(tree, kin_cache, model_ids=None, min_distance=1e-3):
+    if model_ids is None:
+        model_ids = range(get_num_models(tree))
+    bodies = []
+    for model_id in model_ids:
+        bodies += get_bodies(tree, model_id)
+    body_ids = [body.get_body_index() for body in bodies]
+    phi, normal, xA, xB, bodyA_idx, bodyB_idx = tree.collisionDetect(kin_cache, body_ids, True)
+    return {(body_id1, body_id2) for distance, body_id1, body_id2 in zip(phi, bodyA_idx, bodyB_idx) if distance < min_distance}
+
+def are_colliding(tree, kin_cache, disabled_self_collisions=set(), **kwargs):
+    # TODO: colliding models
+    print()
+    for body_id1, body_id2 in colliding_bodies(tree, kin_cache, **kwargs):
+        body1 = get_body(tree, body_id1)
+        body2 = get_body(tree, body_id2)
+        if body1.get_model_instance_id() != body2.get_model_instance_id():
+            return True
+        if disabled_self_collisions is True:
+            continue
+        if (body1.get_name(), body2.get_name()) not in disabled_self_collisions:
+            #print(body1.get_name(), body2.get_name())
+            #return True
+            pass
+        else:
+            print(body1.get_name(), body2.get_name())
+    return False
+
 ##################################################
 
+def load_disabled_collisions(srdf_file):
+    srdf_string = open(srdf_file).read()
+    regex = r'<\s*disable_collisions\s+link1="(\w+)"\s+link2="(\w+)"\s+reason="(\w+)"\s*/>'
+    disabled_collisions = set()
+    for link1, link2, reason in re.findall(regex, srdf_string):
+        disabled_collisions.update([(link1, link2), (link2, link1)])
+    return disabled_collisions
+
 def main():
+    #pr2_file = 'pr2_simplified.urdf'
     pr2_file = get_drake_file(PR2_URDF)
     table_file = get_drake_file(TABLE_SDF)
     block_file = get_drake_file(BLOCK_URDF)
+    disabled_collisions = load_disabled_collisions('pr2.srdf')
 
     tree = RigidBodyTree()
     pr2 = add_model(tree, pr2_file, fixed_base=True)
@@ -380,10 +421,8 @@ def main():
 
     print("Bodies:", tree.get_num_bodies())
     print("Frames:", tree.get_num_frames())
-    for body_id in range(tree.get_num_bodies()):
-        print(body_id, get_body_name(tree, body_id))
-    #for body in get_bodies(tree):
-    #    print(body.get_name())
+    for body in get_bodies(tree):
+        print(body.get_body_index(), body.get_name(), body.get_group_to_collision_ids_map().keys())
 
     print("Positions:", tree.get_num_positions())
     print("Velocities:", tree.get_num_velocities())
@@ -398,8 +437,8 @@ def main():
     q = Conf(tree)
     q[get_position_ids(tree, PR2_GROUPS['base'], pr2)] = [0, 0, np.pi/2]
     q[get_position_ids(tree, PR2_GROUPS['torso'], pr2)] = [0.2]
-    q[get_position_ids(tree, PR2_GROUPS['left_arm'], pr2)] = REST_LEFT_ARM
-    q[get_position_ids(tree, PR2_GROUPS['right_arm'], pr2)] = rightarm_from_leftarm(REST_LEFT_ARM)
+    #q[get_position_ids(tree, PR2_GROUPS['left_arm'], pr2)] = REST_LEFT_ARM
+    #q[get_position_ids(tree, PR2_GROUPS['right_arm'], pr2)] = rightarm_from_leftarm(REST_LEFT_ARM)
 
     set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block1))
     set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block2))
@@ -412,7 +451,8 @@ def main():
 
     # TODO: problem that doesn't take into account frame
 
-    kin_cache = tree.doKinematics(Conf(tree))
+    kin_cache = tree.doKinematics(q)
+    print('Colliding:', len(colliding_bodies(tree, kin_cache)))
 
     aabb = get_model_visual_aabb(tree, kin_cache, table1)
     print(aabb)
@@ -421,6 +461,11 @@ def main():
     while True:
         vis_helper.draw(q)
         #print('Positions:', q)
+        print(are_colliding(tree, tree.doKinematics(q), disabled_self_collisions=disabled_collisions, model_ids=[pr2]))
+        #print(are_colliding(tree, tree.doKinematics(q), disabled_self_collisions=set()), 
+        #    are_colliding(tree, tree.doKinematics(q), disabled_self_collisions=disabled_collisions),
+        #    are_colliding(tree, tree.doKinematics(q), disabled_self_collisions=True))
+
         raw_input('Continue?')
         print(set_random_positions(tree, q, get_position_ids(tree, PR2_GROUPS['base'], pr2)))
         q[get_position_ids(tree, POSE_POSITIONS, block1)] = sample_placement(tree, block1, table1)
