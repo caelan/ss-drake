@@ -22,6 +22,8 @@ from pydrake.systems.framework import BasicVector, DiagramBuilder
 # TODO(eric.cousineau): Use `unittest` (after moving `ik` into `multibody`),
 # declaring this as a drake_py_unittest in the BUILD.bazel file.
 
+from pr2_self_collision import PR2_COLLISION_PAIRS, INITIAL_COLLISION_PAIRS
+
 X_POSITION = 'base_x' # 'weld_x'
 Y_POSITION = 'base_y'
 Z_POSITION = 'base_z'
@@ -68,8 +70,10 @@ PR2_GROUPS = {
                     'l_elbow_flex_joint', 'l_forearm_roll_joint', 'l_wrist_flex_joint', 'l_wrist_roll_joint'],
     'right_arm': ['r_shoulder_pan_joint', 'r_shoulder_lift_joint', 'r_upper_arm_roll_joint',
                      'r_elbow_flex_joint', 'r_forearm_roll_joint', 'r_wrist_flex_joint', 'r_wrist_roll_joint'],
-    'left_gripper': ['l_gripper_l_finger_joint', 'l_gripper_r_finger_joint'],
-    'right_gripper': ['r_gripper_l_finger_joint', 'r_gripper_r_finger_joint'],
+    'left_gripper': ['l_gripper_l_finger_joint', 'l_gripper_r_finger_joint', 
+        'l_gripper_l_finger_tip_joint', 'l_gripper_r_finger_tip_joint'],
+    'right_gripper': ['r_gripper_l_finger_joint', 'r_gripper_r_finger_joint', 
+        'r_gripper_l_finger_tip_joint', 'r_gripper_r_finger_tip_joint'],
 
 }
 
@@ -205,7 +209,17 @@ def set_zero_positions(tree, q, position_ids):
     return values
 
 def set_random_positions(tree, q, position_ids):
-    values = tree.getRandomConfiguration()[position_ids]
+    values = tree.getRandomConfiguration()[position_ids] # TODO: switches to gaussian when not defined
+    q[position_ids] = values
+    return values
+
+def set_min_positions(tree, q, position_ids):
+    values = [get_min_position(tree, position_id) for position_id in position_ids]
+    q[position_ids] = values
+    return values
+
+def set_max_positions(tree, q, position_ids):
+    values = [get_max_position(tree, position_id) for position_id in position_ids]
     q[position_ids] = values
     return values
 
@@ -361,32 +375,43 @@ def sample_placement(tree, object_id, surface_id, max_attempts=50, epsilon=1e-3)
     return None
 
 
-def colliding_bodies(tree, kin_cache, model_ids=None, min_distance=1e-3):
+def colliding_bodies(tree, kin_cache, model_ids=None, min_distance=-1e-6):
     if model_ids is None:
         model_ids = range(get_num_models(tree))
     bodies = []
     for model_id in model_ids:
         bodies += get_bodies(tree, model_id)
     body_ids = [body.get_body_index() for body in bodies]
-    phi, normal, xA, xB, bodyA_idx, bodyB_idx = tree.collisionDetect(kin_cache, body_ids, True)
+    phi, normal, xA, xB, bodyA_idx, bodyB_idx = tree.collisionDetect(kin_cache, body_ids, False)
     return {(body_id1, body_id2) for distance, body_id1, body_id2 in zip(phi, bodyA_idx, bodyB_idx) if distance < min_distance}
 
-def are_colliding(tree, kin_cache, disabled_self_collisions=set(), **kwargs):
-    # TODO: colliding models
-    print()
-    for body_id1, body_id2 in colliding_bodies(tree, kin_cache, **kwargs):
-        body1 = get_body(tree, body_id1)
-        body2 = get_body(tree, body_id2)
-        if body1.get_model_instance_id() != body2.get_model_instance_id():
+all_collision_filter = lambda b1, b2: True
+none_collision_filter = lambda b1, b2: False
+nonadjacent_collision_filter = lambda b1, b2: not b1.adjacentTo(b2) and not b2.adjacentTo(b1)
+self_collision_filter = lambda b1, b2: b1.get_model_instance_id() == b2.get_model_instance_id()
+other_collision_filter = lambda b1, b2: b1.get_model_instance_id() != b2.get_model_instance_id()
+
+def get_disabled_collision_filter(disabled_pairs):
+    def fn(b1, b2):
+        if other_collision_filter(b1, b2):
             return True
-        if disabled_self_collisions is True:
-            continue
-        if (body1.get_name(), body2.get_name()) not in disabled_self_collisions:
-            #print(body1.get_name(), body2.get_name())
-            #return True
-            pass
-        else:
-            print(body1.get_name(), body2.get_name())
+        return ((b1.get_name(), b2.get_name()) not in disabled_pairs) and \
+            ((b2.get_name(), b1.get_name()) not in disabled_pairs)
+    return fn
+
+def get_enabled_collision_filter(enabled_pairs):
+    def fn(b1, b2):
+        if other_collision_filter(b1, b2):
+            return True
+        return ((b1.get_name(), b2.get_name()) in enabled_pairs) or \
+            ((b2.get_name(), b1.get_name()) in enabled_pairs)
+    return fn
+
+def are_colliding(tree, kin_cache, collision_filter=all_collision_filter, **kwargs):
+    for body_id1, body_id2 in colliding_bodies(tree, kin_cache, **kwargs):
+        if collision_filter(get_body(tree, body_id1), get_body(tree, body_id2)):
+            #print(get_body(tree, body_id1).get_name(), get_body(tree, body_id2).get_name())
+            return True
     return False
 
 ##################################################
@@ -404,7 +429,10 @@ def main():
     pr2_file = get_drake_file(PR2_URDF)
     table_file = get_drake_file(TABLE_SDF)
     block_file = get_drake_file(BLOCK_URDF)
-    disabled_collisions = load_disabled_collisions('pr2.srdf')
+
+    enabled_collision_filter = get_enabled_collision_filter(PR2_COLLISION_PAIRS)
+    #disabled_collision_filter = get_disabled_collision_filter(load_disabled_collisions('pr2.srdf'))
+    disabled_collision_filter = get_disabled_collision_filter(INITIAL_COLLISION_PAIRS)
 
     tree = RigidBodyTree()
     pr2 = add_model(tree, pr2_file, fixed_base=True)
@@ -439,6 +467,8 @@ def main():
     q[get_position_ids(tree, PR2_GROUPS['torso'], pr2)] = [0.2]
     #q[get_position_ids(tree, PR2_GROUPS['left_arm'], pr2)] = REST_LEFT_ARM
     #q[get_position_ids(tree, PR2_GROUPS['right_arm'], pr2)] = rightarm_from_leftarm(REST_LEFT_ARM)
+    set_max_positions(tree, q, get_position_ids(tree, PR2_GROUPS['left_gripper'], pr2))
+    set_max_positions(tree, q, get_position_ids(tree, PR2_GROUPS['right_gripper'], pr2))
 
     set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block1))
     set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block2))
@@ -451,20 +481,21 @@ def main():
 
     # TODO: problem that doesn't take into account frame
 
-    kin_cache = tree.doKinematics(q)
-    print('Colliding:', len(colliding_bodies(tree, kin_cache)))
+    #print('Colliding:', sorted(map(lambda (i, j): (str(get_body(tree, i).get_name()), str(get_body(tree, j).get_name())), 
+    #    colliding_bodies(tree, tree.doKinematics(Conf(tree)), model_ids=[pr2]))))
 
-    aabb = get_model_visual_aabb(tree, kin_cache, table1)
-    print(aabb)
-    print(get_aabb_min(aabb))
+    #aabb = get_model_visual_aabb(tree, kin_cache, table1)
+    #print(aabb)
+    #print(get_aabb_min(aabb))
 
     while True:
         vis_helper.draw(q)
         #print('Positions:', q)
-        print(are_colliding(tree, tree.doKinematics(q), disabled_self_collisions=disabled_collisions, model_ids=[pr2]))
-        #print(are_colliding(tree, tree.doKinematics(q), disabled_self_collisions=set()), 
-        #    are_colliding(tree, tree.doKinematics(q), disabled_self_collisions=disabled_collisions),
-        #    are_colliding(tree, tree.doKinematics(q), disabled_self_collisions=True))
+        print(
+            #are_colliding(tree, tree.doKinematics(q), collision_filter=all_collision_filter),
+            are_colliding(tree, tree.doKinematics(q), collision_filter=disabled_collision_filter),
+            are_colliding(tree, tree.doKinematics(q), collision_filter=enabled_collision_filter),
+            are_colliding(tree, tree.doKinematics(q), collision_filter=other_collision_filter))
 
         raw_input('Continue?')
         print(set_random_positions(tree, q, get_position_ids(tree, PR2_GROUPS['base'], pr2)))

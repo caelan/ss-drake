@@ -1,3 +1,6 @@
+
+INITIAL_COLLISION_PAIRS = [('base_link', 'bl_caster_l_wheel_link'), ('base_link', 'bl_caster_r_wheel_link'), ('base_link', 'br_caster_l_wheel_link'), ('base_link', 'br_caster_r_wheel_link'), ('base_link', 'fl_caster_l_wheel_link'), ('base_link', 'fl_caster_r_wheel_link'), ('base_link', 'fr_caster_l_wheel_link'), ('base_link', 'fr_caster_r_wheel_link'), ('base_link', 'l_shoulder_pan_link'), ('base_link', 'r_shoulder_pan_link'), ('double_stereo_link', 'narrow_stereo_gazebo_l_stereo_camera_frame'), ('double_stereo_link', 'narrow_stereo_gazebo_r_stereo_camera_frame'), ('double_stereo_link', 'wide_stereo_gazebo_l_stereo_camera_frame'), ('double_stereo_link', 'wide_stereo_gazebo_r_stereo_camera_frame'), ('head_pan_link', 'double_stereo_link'), ('head_pan_link', 'head_plate_frame'), ('head_pan_link', 'sensor_mount_link'), ('head_plate_frame', 'double_stereo_link'), ('head_tilt_link', 'double_stereo_link'), ('head_tilt_link', 'high_def_frame'), ('head_tilt_link', 'high_def_optical_frame'), ('head_tilt_link', 'narrow_stereo_gazebo_l_stereo_camera_frame'), ('head_tilt_link', 'narrow_stereo_gazebo_r_stereo_camera_frame'), ('head_tilt_link', 'narrow_stereo_link'), ('head_tilt_link', 'sensor_mount_link'), ('head_tilt_link', 'wide_stereo_gazebo_l_stereo_camera_frame'), ('head_tilt_link', 'wide_stereo_gazebo_r_stereo_camera_frame'), ('head_tilt_link', 'wide_stereo_link'), ('l_forearm_link', 'l_forearm_cam_frame'), ('l_forearm_link', 'l_gripper_motor_accelerometer_link'), ('l_forearm_link', 'l_gripper_palm_link'), ('l_forearm_link', 'l_wrist_roll_link'), ('l_gripper_l_finger_link', 'l_gripper_l_parallel_link'), ('l_gripper_l_finger_tip_link', 'l_gripper_r_finger_tip_link'), ('l_gripper_l_parallel_link', 'l_gripper_l_finger_tip_link'), ('l_gripper_r_finger_link', 'l_gripper_r_parallel_link'), ('l_gripper_r_parallel_link', 'l_gripper_r_finger_tip_link'), ('l_shoulder_lift_link', 'l_upper_arm_link'), ('l_shoulder_pan_link', 'l_upper_arm_link'), ('l_shoulder_pan_link', 'l_upper_arm_roll_link'), ('l_upper_arm_link', 'l_forearm_roll_link'), ('l_wrist_flex_link', 'l_gripper_motor_accelerometer_link'), ('r_forearm_link', 'r_forearm_cam_frame'), ('r_forearm_link', 'r_gripper_motor_accelerometer_link'), ('r_forearm_link', 'r_gripper_palm_link'), ('r_forearm_link', 'r_wrist_roll_link'), ('r_gripper_l_finger_link', 'r_gripper_l_parallel_link'), ('r_gripper_l_finger_tip_link', 'r_gripper_r_finger_tip_link'), ('r_gripper_l_parallel_link', 'r_gripper_l_finger_tip_link'), ('r_gripper_r_finger_link', 'r_gripper_r_parallel_link'), ('r_gripper_r_parallel_link', 'r_gripper_r_finger_tip_link'), ('r_shoulder_lift_link', 'r_upper_arm_link'), ('r_shoulder_pan_link', 'r_upper_arm_link'), ('r_shoulder_pan_link', 'r_upper_arm_roll_link'), ('r_upper_arm_link', 'r_forearm_roll_link'), ('r_wrist_flex_link', 'r_gripper_motor_accelerometer_link'), ('torso_lift_link', 'l_shoulder_lift_link'), ('torso_lift_link', 'laser_tilt_link'), ('torso_lift_link', 'r_shoulder_lift_link')]
+
 # Produced using OpenRAVE
 # https://github.com/rdiankov/openrave/blob/ff43549fb6db281c7bc9a85794b88c29d6522ab4/include/openrave/collisionchecker.h
 
@@ -34,7 +37,8 @@ PR2_COLLISION_PAIRS = [('base_footprint', 'bl_caster_l_wheel_link'), ('base_link
                           ('br_caster_l_wheel_link', 'fl_caster_l_wheel_link'),
                           ('br_caster_r_wheel_link', 'fl_caster_l_wheel_link'),
                           ('base_footprint', 'fl_caster_r_wheel_link'),
-                          ('base_link', 'fl_caster_r_wheel_link'), ('base_bellow_link', 'fl_caster_r_wheel_link'),
+                          #('base_link', 'fl_caster_r_wheel_link'), 
+                          ('base_bellow_link', 'fl_caster_r_wheel_link'),
                           ('bl_caster_rotation_link', 'fl_caster_r_wheel_link'),
                           ('bl_caster_l_wheel_link', 'fl_caster_r_wheel_link'),
                           ('bl_caster_r_wheel_link', 'fl_caster_r_wheel_link'),
@@ -183,7 +187,8 @@ PR2_COLLISION_PAIRS = [('base_footprint', 'bl_caster_l_wheel_link'), ('base_link
                           ('fr_caster_l_wheel_link', 'double_stereo_link'),
                           ('fr_caster_r_wheel_link', 'double_stereo_link'),
                           ('torso_lift_link', 'double_stereo_link'), ('base_footprint', 'l_shoulder_pan_link'),
-                          ('base_link', 'l_shoulder_pan_link'), ('base_bellow_link', 'l_shoulder_pan_link'),
+                          #('base_link', 'l_shoulder_pan_link'), 
+                          ('base_bellow_link', 'l_shoulder_pan_link'),
                           ('bl_caster_rotation_link', 'l_shoulder_pan_link'),
                           ('bl_caster_l_wheel_link', 'l_shoulder_pan_link'),
                           ('bl_caster_r_wheel_link', 'l_shoulder_pan_link'),
