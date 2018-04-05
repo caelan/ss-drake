@@ -231,6 +231,15 @@ class DrakeVisualizerHelper:
 
 #####################################
 
+def homogeneous_from_points(points):
+    return np.vstack([points, np.ones(points.shape[1])])
+
+def points_from_homogenous(homogenous):
+    return homogenous[:3,:]
+
+def transform_points(tform, points):
+    return points_from_homogenous(tform.dot(homogeneous_from_points(points)))
+
 def aabb_from_points(points):
     return np.column_stack([np.min(points, axis=1), np.max(points, axis=1)])
 
@@ -246,7 +255,7 @@ def get_aabb_center(aabb):
 def get_aabb_extent(aabb):
     return (get_aabb_max(aabb) - get_aabb_min(aabb)) / 2
 
-def aabb_union(*aabbs):
+def aabb_union(aabbs):
     return aabb_from_points(np.hstack(aabbs))
 
 #def aabb2d_from_aabb(aabb):
@@ -259,25 +268,34 @@ def aabb_contains(container, contained):
 
 ##################################################
 
-def get_visual_elements(tree, model_id=-1):
-    elements = []
-    for body in get_bodies(tree, model_id):
-        elements += body.get_visual_elements()
-    return elements
+def get_local_visual_points(body):
+    return np.hstack([transform_points(element.getLocalTransform(),
+                                       element.getGeometry().getPoints())
+                        for element in body.get_visual_elements()])
 
-def get_element_points(*elements):
-    return np.hstack([element.getGeometry().getPoints() for element in elements])
+def get_local_visual_box_points(body): # getBoundingBoxPoints returns 8 points
+    return np.hstack([transform_points(element.getLocalTransform(),
+                                       element.getGeometry().getBoundingBoxPoints())
+                        for element in body.get_visual_elements()])
 
-def get_element_aabb(*elements):
-    # getBoundingBoxPoints returns 8 points
-    return aabb_from_points(np.hstack([element.getGeometry().getBoundingBoxPoints()
-                                       for element in elements]))
+def get_body_visual_points(tree, kin_cache, body): # ComputeWorldFixedPose | IsRigidlyFixedToWorld
+    #return transform_points(tree.CalcBodyPoseInWorldFrame(kin_cache, body), get_local_body_visual_points(body))
+    return tree.transformPoints(kin_cache, get_local_visual_points(body),
+                                body.get_body_index(), get_world(tree).get_body_index())
 
-def get_body_points(tree, kin_cache, body): # ComputeWorldFixedPose | IsRigidlyFixedToWorld
-    #return tree.CalcBodyPoseInWorldFrame(kin_cache, body)
-    return tree.transformPoints(kin_cache,
-                                body.get_body_index(),
-                                get_world(tree).get_body_index())
+def get_model_visual_points(tree, kin_cache, model_id):
+    return np.hstack([get_body_visual_points(tree, kin_cache, body)
+                      for body in get_bodies(tree, model_id)])
+
+def get_body_visual_aabb(tree, kin_cache, body):
+    #return aabb_from_points(transform_points(tree.CalcBodyPoseInWorldFrame(kin_cache, body),
+    #                                         get_local_body_visual_box_points(body)))
+    return aabb_from_points(tree.transformPoints(kin_cache, get_local_visual_box_points(body),
+                                                 body.get_body_index(), get_world(tree).get_body_index()))
+
+def get_model_visual_aabb(tree, kin_cache, model_id):
+    return aabb_union([get_body_visual_aabb(tree, kin_cache, body)
+                      for body in get_bodies(tree, model_id)])
 
 ##################################################
 
@@ -321,8 +339,6 @@ def main():
     print(table1, is_fixed_base(tree, table1))
     print(block1, is_fixed_base(tree, block1))
 
-    points = get_element_points(*get_visual_elements(tree, table1))
-    print(points.shape)
 
     # body.ComputeWorldFixedPose()
     # CreateKinematicsCacheFromBodiesVector
@@ -331,7 +347,7 @@ def main():
 
     kin_cache = tree.doKinematics(Conf(tree))
 
-    aabb = get_element_aabb(*get_visual_elements(tree, table1))
+    aabb = get_model_visual_aabb(tree, kin_cache, table1)
     print(aabb)
     print(get_aabb_min(aabb))
 
