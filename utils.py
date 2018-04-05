@@ -21,7 +21,7 @@ from pydrake.systems.framework import BasicVector, DiagramBuilder
 # TODO(eric.cousineau): Use `unittest` (after moving `ik` into `multibody`),
 # declaring this as a drake_py_unittest in the BUILD.bazel file.
 
-X_POSITION = 'base_x'
+X_POSITION = 'base_x' # 'weld_x'
 Y_POSITION = 'base_y'
 Z_POSITION = 'base_z'
 ROLL_POSITION = 'base_roll'
@@ -61,26 +61,52 @@ BLOCK_URDF = "examples/kuka_iiwa_arm/models/objects/block_for_pick_and_place_mid
 
 ##################################################
 
+# TODO: distinguish between joints and positions better
+
 def get_num_joints(tree):
     return tree.get_num_positions() # number_of_positions
 
-def get_joint_name(tree, joint_id):
-    return str(tree.get_position_name(joint_id))
+def get_position_name(tree, position_id):
+    return str(tree.get_position_name(position_id))
 
-def get_joint_names(tree, joint_ids):
-    return [get_joint_name(tree, joint_id) for joint_id in joint_ids]
+def get_position_names(tree, position_ids):
+    return [get_position_name(tree, position_id) for position_id in position_ids]
 
-def get_joint_id(tree, joint_name, model_id=-1):
-    return tree.findJointId(joint_name, model_id=model_id)
+def get_position_id(tree, position_name, model_id=-1):
+    for body in get_bodies(tree, model_id):
+        for position_id in range(body.get_position_start_index(),
+                                 body.get_position_start_index() + body.get_num_positions()):
+            if get_position_name(tree, position_id) == position_name:
+                return position_id
+    raise ValueError(position_name)
 
-def get_joint_ids(tree, joint_names, model_id=-1):
-    return [get_joint_id(tree, joint_name, model_id) for joint_name in joint_names]
+def get_position_ids(tree, position_names, model_id=-1):
+    return [get_position_id(tree, position_name, model_id) for position_name in position_names]
 
-def get_min_position(tree, joint_id):
-    return tree.joint_limit_min[joint_id]
+#def get_joint_id(tree, joint_name, model_id=-1):
+#    return tree.findJointId(joint_name, model_id=model_id)
 
-def get_max_position(tree, joint_id):
-    return tree.joint_limit_max[joint_id]
+#def get_joint_ids(tree, joint_names, model_id=-1):
+#    return [get_joint_id(tree, joint_name, model_id) for joint_name in joint_names]
+
+def get_min_position(tree, position_id):
+    return tree.joint_limit_min[position_id]
+
+def get_max_position(tree, position_id):
+    return tree.joint_limit_max[position_id]
+
+def has_position_name(tree, position_name, model_id=-1):
+    try:
+        get_position_id(tree, position_name, model_id)
+    except ValueError:
+        return False
+    return True
+
+def has_position_names(tree, position_names, model_id=-1):
+    return any(has_position_name(tree, position_name, model_id) for position_name in position_names)
+
+def is_fixed_base(tree, model_id):
+    return not has_position_names(tree, POSE_POSITIONS, model_id)
 
 ##################################################
 
@@ -146,11 +172,11 @@ def get_drake_file(rel_path):
 def Conf(tree):
     return tree.getZeroConfiguration()
 
-def set_zero_positions(tree, q, joint_ids):
-    q[joint_ids] = tree.getZeroConfigurations()[joint_ids]
+def set_zero_positions(tree, q, position_ids):
+    q[position_ids] = tree.getZeroConfigurations()[position_ids]
 
-def set_random_positions(tree, q, joint_ids):
-    q[joint_ids] = tree.getRandomConfiguration()[joint_ids]
+def set_random_positions(tree, q, position_ids):
+    q[position_ids] = tree.getRandomConfiguration()[position_ids]
 
 ##################################################
 
@@ -159,10 +185,10 @@ def add_model(tree, model_file, pose=None, fixed_base=True):
     package_map = PackageMap()
     base_type = FloatingBaseType.kFixed if fixed_base else FloatingBaseType.kRollPitchYaw
 
-    #name = 'frame' # TODO: body name is always frame
-    #pose = Pose() if pose is None else pose
-    #weld_frame = RigidBodyFrame(name, get_world(tree), pose) # point, euler
-    weld_frame = None
+    name = 'frame' # TODO: body name is always frame
+    weld_frame = None if pose is None else RigidBodyFrame(name, get_world(tree), pose) # point, euler
+    #weld_frame = None
+    #tree.addFrame(weld_frame)
 
     if model_file.endswith('.urdf'):
         base_dir = os.path.dirname(model_file)
@@ -198,10 +224,60 @@ class DrakeVisualizerHelper:
 
     def draw(self, q=None):
         if q is not None:
-            self.update(self.q)
+            self.update(q)
         context = self.visualizer.CreateDefaultContext()
         context.FixInputPort(0, BasicVector(self.x))
         self.visualizer.Publish(context)
+
+#####################################
+
+def aabb_from_points(points):
+    return np.column_stack([np.min(points, axis=1), np.max(points, axis=1)])
+
+def get_aabb_min(aabb):
+    return aabb[:,0]
+
+def get_aabb_max(aabb):
+    return aabb[:,1]
+
+def get_aabb_center(aabb):
+    return (get_aabb_min(aabb) + get_aabb_max(aabb)) / 2
+
+def get_aabb_extent(aabb):
+    return (get_aabb_max(aabb) - get_aabb_min(aabb)) / 2
+
+def aabb_union(*aabbs):
+    return aabb_from_points(np.hstack(aabbs))
+
+#def aabb2d_from_aabb(aabb):
+#    lower, upper = aabb
+#    return lower[:2], upper[:2]
+
+def aabb_contains(container, contained):
+    return np.all(get_aabb_min(container) <= get_aabb_min(contained)) and \
+           np.all(get_aabb_max(contained) <= get_aabb_max(container))
+
+##################################################
+
+def get_visual_elements(tree, model_id=-1):
+    elements = []
+    for body in get_bodies(tree, model_id):
+        elements += body.get_visual_elements()
+    return elements
+
+def get_element_points(*elements):
+    return np.hstack([element.getGeometry().getPoints() for element in elements])
+
+def get_element_aabb(*elements):
+    # getBoundingBoxPoints returns 8 points
+    return aabb_from_points(np.hstack([element.getGeometry().getBoundingBoxPoints()
+                                       for element in elements]))
+
+def get_body_points(tree, kin_cache, body): # ComputeWorldFixedPose | IsRigidlyFixedToWorld
+    #return tree.CalcBodyPoseInWorldFrame(kin_cache, body)
+    return tree.transformPoints(kin_cache,
+                                body.get_body_index(),
+                                get_world(tree).get_body_index())
 
 ##################################################
 
@@ -211,18 +287,17 @@ def main():
     block_file = get_drake_file(BLOCK_URDF)
 
     tree = RigidBodyTree()
-    pr2 = add_model(tree, pr2_file, pose=None, fixed_base=True)
+    pr2 = add_model(tree, pr2_file, fixed_base=True)
 
-    #table1 = add_model(tree, table_file, pose=Pose(Point(2, 0, 0)), fixed_base=True)
-    #table2 = add_model(tree, table_file, pose=Pose(Point(-2, 0, 0)), fixed_base=True)
-    block1 = add_model(tree, block_file, pose=Pose(), fixed_base=False)
-    #block2 = add_model(tree, block_file, pose=Pose(), fixed_base=False)
+    table1 = add_model(tree, table_file, pose=Pose(Point(2, 0, 0)), fixed_base=True)
+    table2 = add_model(tree, table_file, pose=Pose(Point(-2, 0, 0)), fixed_base=True)
+    block1 = add_model(tree, block_file, fixed_base=False)
+    block2 = add_model(tree, block_file, fixed_base=False)
     AddFlatTerrainToWorld(tree, box_size=10, box_depth=.1) # Adds visual & collision
 
     print("Models:", get_num_models(tree))
     for model_id in range(get_num_models(tree)):
         print(model_id, get_model_name(tree, model_id))
-        print(get_bodies(tree, model_id)) # TODO: this screws things up?
 
     print("Bodies:", tree.get_num_bodies())
     print("Frames:", tree.get_num_frames())
@@ -233,16 +308,32 @@ def main():
 
     print("Positions:", tree.get_num_positions())
     print("Velocities:", tree.get_num_velocities())
-    for joint_id in range(get_num_joints(tree)):
-        print(joint_id, get_joint_name(tree, joint_id))
-        print(joint_id, get_joint_id(tree, get_joint_name(tree, joint_id)))
+    for position_id in range(tree.get_num_positions()):
+        print(position_id, get_position_name(tree, position_id))
 
     print("Actuators:", tree.get_num_actuators())
 
     vis_helper = DrakeVisualizerHelper(tree)
 
     q = Conf(tree)
-    set_random_positions(tree, q, get_joint_ids(tree, POSE_POSITIONS))
+    set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block1))
+    set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block2))
+    print(table1, is_fixed_base(tree, table1))
+    print(block1, is_fixed_base(tree, block1))
+
+    points = get_element_points(*get_visual_elements(tree, table1))
+    print(points.shape)
+
+    # body.ComputeWorldFixedPose()
+    # CreateKinematicsCacheFromBodiesVector
+
+    # TODO: problem that doesn't take into account frame
+
+    kin_cache = tree.doKinematics(Conf(tree))
+
+    aabb = get_element_aabb(*get_visual_elements(tree, table1))
+    print(aabb)
+    print(get_aabb_min(aabb))
 
 
     vis_helper.draw(q)
