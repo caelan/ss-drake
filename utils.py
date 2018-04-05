@@ -13,33 +13,25 @@ from pydrake.multibody.rigid_body_tree import (
     RigidBodyTree,
     AddFlatTerrainToWorld,
 )
-from pydrake.solvers import ik
-from pydrake.systems.analysis import Simulator
+
 from pydrake.multibody.rigid_body_plant import RigidBodyPlant, DrakeVisualizer, \
   CompliantMaterial, CompliantContactModelParameters
 from pydrake.lcm import DrakeMockLcm, DrakeLcm, DrakeLcmInterface
-from pydrake.multibody.shapes import Box, Cylinder, Mesh
 from pydrake.systems.framework import BasicVector, DiagramBuilder
 # TODO(eric.cousineau): Use `unittest` (after moving `ik` into `multibody`),
 # declaring this as a drake_py_unittest in the BUILD.bazel file.
 
-#Body = namedtuple('Body', ['tree', ''])
+X_POSITION = 'base_x'
+Y_POSITION = 'base_y'
+Z_POSITION = 'base_z'
+ROLL_POSITION = 'base_roll'
+PITCH_POSITION = 'base_pitch'
+YAW_POSITION = 'base_yaw'
 
-class Body(object):
-    def __init__(self, tree, name, fixed, start_frame, start_position):
-        self.tree = tree
-        self.name = name
-        self.fixed = fixed
-        self.start_frame = start_frame
-        self.num_frames = self.tree.get_num_frames() - self.start_frame
-        self.start_position = start_position
-        self.num_positions = self.tree.get_num_positions() - self.start_position
-    def get_frames(self):
-        return [get_frame(tree, index) for index in xrange(self.start_frame, self.num_frames)]
-    def get_bodies(self):
-        return [get_body(tree, index) for index in xrange(self.start_frame, self.num_frames)]
-    def get_positions(self):
-        return range(self.start_position, self.num_positions)
+POINT_POSITIONS = [X_POSITION, Y_POSITION, Z_POSITION]
+EULER_POSITIONS = [ROLL_POSITION, PITCH_POSITION, YAW_POSITION]
+POSE_POSITIONS = POINT_POSITIONS + EULER_POSITIONS
+POSE2D_POSITIONS = [X_POSITION, Y_POSITION, YAW_POSITION]
 
 def Point(x=0, y=0, z=0):
     return np.array([x, y, z])
@@ -61,26 +53,89 @@ def euler_from_pose(pose):
 def point_euler_from_pose(pose):
     return point_from_pose(pose), euler_from_pose(pose)
 
-def add_model(tree, model_file, name='frame', pose=None, fixed=True, weld_frame=None):
+##################################################
+
+def get_num_joints(tree):
+    return tree.get_num_positions() # number_of_positions
+
+def get_joint_name(tree, joint_id):
+    return str(tree.get_position_name(joint_id))
+
+def get_joint_names(tree, joint_ids):
+    return [get_joint_name(tree, joint_id) for joint_id in joint_ids]
+
+def get_joint_id(tree, joint_name, model_id=-1):
+    return tree.findJointId(joint_name, model_id=model_id)
+
+def get_joint_ids(tree, joint_names, model_id=-1):
+    return [get_joint_id(tree, joint_name, model_id) for joint_name in joint_names]
+
+def get_min_position(tree, joint_id):
+    return tree.joint_limit_min[joint_id]
+
+def get_max_position(tree, joint_id):
+    return tree.joint_limit_max[joint_id]
+
+##################################################
+
+def get_world(tree):
+    #assert(tree.world() is tree.get_body(0))
+    return tree.world()
+
+def get_num_models(tree):
+    return tree.get_num_model_instances()
+
+def get_body_name(tree, body_id):
+    return tree.getBodyOrFrameName(body_id)
+
+def get_frame_name(tree, frame_id):
+    return tree.getBodyOrFrameName(frame_id)
+
+def get_body(tree, body_id):
+    return tree.get_body(body_id)
+
+def get_bodies(tree, model_id=-1):
+    if model_id != -1:
+        return tree.FindModelInstanceBodies(model_id)
+    return [get_body(tree, body_id) for body_id in range(tree.get_num_bodies())]
+
+def get_base_bodies(tree, model_id=-1):
+    return [get_body(tree, body_id) for body_id in tree.FindBaseBodies(model_id=model_id)]
+
+def get_frame(tree, frame_id):
+    return get_body(tree, frame_id).
+
+def get_body_from_name(tree, body_name, model_id=-1):
+    return tree.FindBody(body_name, model_id=model_id)
+
+def get_frame_from_name(tree, frame_name, model_id=-1):
+    return tree.findFrame(frame_name, model_id=model_id)
+
+def get_base_body(tree, model_id):
+    base_bodies = get_bodies(tree, model_id)
+    #assert(len(base_bodies) == 1) # TODO: should make formal assumption that one root per URDF
+    return base_bodies[0]
+
+def get_model_name(tree, model_id):
+    return str(get_base_body(tree, model_id).get_model_name())
+
+
+def is_fixed(tree, model_index):
+    base_body = base_bodies_from_model_index(tree, model_index)[0]
+    return base_body.IsRigidlyFixedToWorld()
+
+##################################################
+
+def add_model(tree, model_file, pose=None, fixed=True):
     model_string = open(model_file).read()
     base_dir = os.path.dirname(model_file)
     package_map = PackageMap()
 
-    #if isinstance(weld_frame, np.ndarray):
-    #    frame_name = 
-    if pose is not None:
-        # TODO: the body name is still frame
-        #name = 'frame'
-        pose = Pose() if pose is None else pose
-        frame = RigidBodyFrame(name, get_world(tree), pose) # point, euler
-        print(name_from_frame(frame), frame)
-        weld_frame = frame
-
     base_type = FloatingBaseType.kFixed if fixed else FloatingBaseType.kRollPitchYaw
-    #base_type = FloatingBaseType.kQuaternion
+    name = 'frame' # TODO: body name is always frame
+    pose = Pose() if pose is None else pose
+    weld_frame = RigidBodyFrame(name, get_world(tree), pose) # point, euler
 
-    start_frame = tree.get_num_frames()
-    start_position = tree.get_num_positions()
     if model_file.endswith('.urdf'):
         AddModelInstanceFromUrdfStringSearchingInRosPackages(
             model_string, package_map,
@@ -93,19 +148,10 @@ def add_model(tree, model_file, name='frame', pose=None, fixed=True, weld_frame=
         #AddModelInstancesFromSdfString(model_string, base_type, weld_frame, tree) 
     else:
         raise ValueError(model_file)
-    return Body(tree, name, fixed, start_frame, start_position)
-    # TODO: return all frames or just base frame?
+    model_index = tree.get_num_model_instances() - 1
+    return model_index
 
-
-def load_robot_from_urdf(urdf_file, fixed_base=True):
-    # PR2 has explicit base joints
-    # Load our model from URDF
-    robot = RigidBodyTree()
-    add_model(robot, urdf_file, fixed_base=fixed_base)
-
-    #robot = RigidBodyTree(urdf_file, '0' if fixed_base else '1')
-    #robot = RigidBodyTree(urdf_file)
-    return robot
+##################################################
 
 class DrakeVisualizerHelper:
     def __init__(self, tree, default_q=None):
@@ -124,15 +170,6 @@ class DrakeVisualizerHelper:
         context = self.visualizer.CreateDefaultContext()
         context.FixInputPort(0, BasicVector(self.x))
         self.visualizer.Publish(context)
-
-BASE_POSITIONS = ['base_x', 'base_y', 'base_z']
-
-POSITION_NAMES = ['base_x', 'base_y', 'base_z', 'base_roll', 'base_pitch', 'base_yaw', 
-  'x', 'y', 'theta', 'torso_lift_joint', 'head_pan_joint', 'head_tilt_joint', 
-  'r_shoulder_pan_joint', 'r_shoulder_lift_joint', 'r_upper_arm_roll_joint', 'r_elbow_flex_joint', 'r_forearm_roll_joint', 'r_wrist_flex_joint', 'r_wrist_roll_joint', 
-  'r_gripper_l_finger_joint', 'r_gripper_r_finger_joint', 'r_gripper_l_finger_tip_joint', 'r_gripper_r_finger_tip_joint', 
-  'l_shoulder_pan_joint', 'l_shoulder_lift_joint', 'l_upper_arm_roll_joint', 'l_elbow_flex_joint', 'l_forearm_roll_joint', 'l_wrist_flex_joint', 'l_wrist_roll_joint', 
-  'l_gripper_l_finger_joint', 'l_gripper_r_finger_joint', 'l_gripper_l_finger_tip_joint', 'l_gripper_r_finger_tip_joint']
 
 ##################################################
 
@@ -219,44 +256,6 @@ def set_pose(tree, q, model_index, pose):
 
 ##################################################
 
-def get_positions(tree):
-    return range(tree.number_of_positions()) # get_num_positions
-
-def get_position_names(tree):
-    return [name_from_position(tree, i) for i in get_positions(tree)]
-
-def name_from_position(tree, position):
-    return str(tree.get_position_name(position))
-
-def position_from_name(tree, name):
-    for i in xrange(tree.number_of_positions()):
-        if name_from_position(tree, i) == name:
-            return i
-    raise ValueError(name)
-
-def position_min_limit(tree, position):
-    return tree.joint_limit_min[position]
-
-def position_max_limit(tree, position):
-    return tree.joint_limit_max[position]
-
-def gripper_positions(tree, arm):
-    prefix_from_arm = {
-        'right': 'r_gripper_',
-        'left': 'l_gripper_',
-    }
-    return tuple(i for i in xrange(tree.number_of_positions()) 
-        if name_from_position(tree, i).startswith(prefix_from_arm[arm]))
-
-def arm_positions(tree, arm):
-    prefix_from_arm = {
-        'right': 'r_',
-        'left': 'l_',
-        'base': 'base_',
-        'head': 'head_',
-    }
-    return tuple(i for i in xrange(tree.number_of_positions()) 
-        if name_from_position(tree, i).startswith(prefix_from_arm[arm]) and (i not in gripper_positions(tree, arm)))
 
 def print_tree_info(robot):
     print("Models:", robot.get_num_model_instances()) # Doesn't include manually added
@@ -316,9 +315,10 @@ def sample_configuration(tree, positions=None):
         return q
     return q[positions]
 
+PR2_PATH = "examples/pr2/models/pr2_description/urdf/pr2_simplified.urdf"
+
 def main():
-    urdf_file = os.path.join(pydrake.getDrakePath(),
-        "examples/pr2/models/pr2_description/urdf/pr2_simplified.urdf")
+    urdf_file = os.path.join(pydrake.getDrakePath(), PR2_PATH)
 
     # Load our model from URDF
 
@@ -330,7 +330,7 @@ def main():
 
 
     #add_model(robot, urdf_file, pose=Pose())
-    add_model(robot, urdf_file, name='test', pose=Pose())
+    add_model(robot, urdf_file, pose=Pose())
     print_tree_info(robot)
 
     """
@@ -401,27 +401,12 @@ def main():
     vis_helper.draw(q)
     print("Conf", q)
 
-    print(robot.getTerrainContactPoints(robot.world()))
-
-    print(robot.joint_limit_min.shape, robot.joint_limit_max.shape)
-    print(robot.joint_limit_min, robot.joint_limit_max)
 
     print([str(robot.get_position_name(i)) for i in xrange(robot.number_of_positions())])
 
     for i in xrange(robot.number_of_positions()):
         print(i, robot.get_position_name(i), robot.joint_limit_min[i], robot.joint_limit_max[i])
 
-    arms = ['right', 'left']
-    for arm in arms:
-        print(arm, arm_positions(robot, arm))
-        print(arm, gripper_positions(robot, arm))
-
-    # KinematicsCache
-    # http://drake.mit.edu/doxygen_cxx/class_kinematics_cache.html
-
-    # http://drake.mit.edu/doxygen_cxx/group__collision__concepts.html
 
 if __name__ == '__main__':
     main()
-
-# scp utils.py  pr2d2@128.30.47.23:/home/pr2d2/Programs/ss-drake/
