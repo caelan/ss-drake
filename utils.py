@@ -21,6 +21,7 @@ from pydrake.lcm import DrakeMockLcm, DrakeLcm, DrakeLcmInterface
 from pydrake.systems.framework import BasicVector, DiagramBuilder
 # TODO(eric.cousineau): Use `unittest` (after moving `ik` into `multibody`),
 # declaring this as a drake_py_unittest in the BUILD.bazel file.
+from motion_planners.rrt_connect import birrt, direct_path
 
 from pr2_self_collision import PR2_COLLISION_PAIRS, INITIAL_COLLISION_PAIRS
 
@@ -416,6 +417,54 @@ def are_colliding(tree, kin_cache, collision_filter=all_collision_filter, **kwar
 
 ##################################################
 
+def plan_motion(initial_conf, position_ids, end_values, obstacles=None, direct=False, **kwargs):
+    assert len(position_ids) == len(end_values)
+
+    # TODO: pass in limits
+
+    def sample_fn():
+        return tree.getRandomConfiguration()[position_ids]
+
+    def difference_fn(q2, q1):
+        difference = []
+        for joint, value2, value1 in zip(position_ids, q2, q1):
+            #difference.append((value2 - value1) if is_circular(body, joint)
+            #                  else circular_difference(value2, value1))
+            difference.append(value2 - value1)
+        return tuple(difference)
+
+    # TODO: custom weights and step sizes
+    weights = 1*np.ones(len(position_ids))
+    def distance_fn(q1, q2):
+        diff = np.array(difference_fn(q2, q1))
+        return np.sqrt(np.dot(weights, diff * diff))
+
+    resolutions = 0.05*np.ones(len(position_ids))
+    def extend_fn(q1, q2):
+        steps = np.abs(np.divide(difference_fn(q2, q1), resolutions))
+        num_steps = int(np.max(steps)) + 1
+        q = q1
+        for i in xrange(num_steps):
+            q = (1. / (num_steps - i)) * np.array(difference_fn(q2, q)) + q
+            yield q
+            # TODO: should wrap these joints
+
+    def collision_fn(q):
+        return False
+
+        if violates_limits(body, joints, q):
+            return True
+        set_joint_positions(body, joints, q)
+        if obstacles is None:
+            return env_collision(body)
+        return any(pairwise_collision(body, obs) for obs in obstacles)
+
+    start_values = initial_conf[position_ids]
+    if direct:
+        return direct_path(start_values, end_values, extend_fn, collision_fn)
+    return birrt(start_values, end_values, distance_fn,
+                 sample_fn, extend_fn, collision_fn, **kwargs)
+
 def load_disabled_collisions(srdf_file):
     srdf_string = open(srdf_file).read()
     regex = r'<\s*disable_collisions\s+link1="(\w+)"\s+link2="(\w+)"\s+reason="(\w+)"\s*/>'
@@ -463,7 +512,7 @@ def main():
     vis_helper = DrakeVisualizerHelper(tree)
 
     q = Conf(tree)
-    q[get_position_ids(tree, PR2_GROUPS['base'], pr2)] = [0, 0, np.pi/2]
+    q[get_position_ids(tree, PR2_GROUPS['base'], pr2)] = [0, 0, 0]
     q[get_position_ids(tree, PR2_GROUPS['torso'], pr2)] = [0.2]
     #q[get_position_ids(tree, PR2_GROUPS['left_arm'], pr2)] = REST_LEFT_ARM
     #q[get_position_ids(tree, PR2_GROUPS['right_arm'], pr2)] = rightarm_from_leftarm(REST_LEFT_ARM)
@@ -474,6 +523,13 @@ def main():
     set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block2))
     print(table1, is_fixed_base(tree, table1))
     print(block1, is_fixed_base(tree, block1))
+
+    position_ids = get_position_ids(tree, PR2_GROUPS['base'], pr2)
+    path = plan_motion(q, position_ids, [2, 2, np.pi/2])
+    for values in path:
+        q[position_ids] = values
+        vis_helper.draw(q)
+        raw_input('Continue?')
 
 
     # body.ComputeWorldFixedPose()
