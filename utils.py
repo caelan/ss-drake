@@ -59,6 +59,32 @@ PR2_URDF = "examples/pr2/models/pr2_description/urdf/pr2_simplified.urdf"
 TABLE_SDF = "examples/kuka_iiwa_arm/models/table/extra_heavy_duty_table_surface_only_collision.sdf"
 BLOCK_URDF = "examples/kuka_iiwa_arm/models/objects/block_for_pick_and_place_mid_size.urdf"
 
+PR2_GROUPS = {
+    'base': ['x', 'y', 'theta'],
+    'torso': ['torso_lift_joint'],
+    'head': ['head_pan_joint', 'head_tilt_joint'],
+    'left_arm': ['l_shoulder_pan_joint', 'l_shoulder_lift_joint', 'l_upper_arm_roll_joint',
+                    'l_elbow_flex_joint', 'l_forearm_roll_joint', 'l_wrist_flex_joint', 'l_wrist_roll_joint'],
+    'right_arm': ['r_shoulder_pan_joint', 'r_shoulder_lift_joint', 'r_upper_arm_roll_joint',
+                     'r_elbow_flex_joint', 'r_forearm_roll_joint', 'r_wrist_flex_joint', 'r_wrist_roll_joint'],
+    'left_gripper': ['l_gripper_l_finger_joint', 'l_gripper_r_finger_joint'],
+    'right_gripper': ['r_gripper_l_finger_joint', 'r_gripper_r_finger_joint'],
+
+}
+
+PR2_TOOL_POSE = ([0.18, 0., 0.], [0., 0.70710678, 0., 0.70710678])
+PR2_TOOL_DIRECTION = [ 0., 0., 1.]
+
+TOP_HOLDING_LEFT_ARM = [0.67717021, -0.34313199, 1.2, -1.46688405, 1.24223229, -1.95442826, 2.22254125]
+SIDE_HOLDING_LEFT_ARM = [0.39277395, 0.33330058, 0., -1.52238431, 2.72170996, -1.21946936, -2.98914779]
+REST_LEFT_ARM = [2.13539289, 1.29629967, 3.74999698, -0.15000005, 10000., -0.10000004, 10000.]
+WIDE_LEFT_ARM = [1.5806603449288885, -0.14239066980481405, 1.4484623937179126, -1.4851759349218694, 1.3911839347271555, -1.6531320011389408, -2.978586584568441]
+CENTER_LEFT_ARM = [-0.07133691252641006, -0.052973836083405494, 1.5741805775919033, -1.4481146328076862, 1.571782540186805, -1.4891468812835686, -9.413338322697955]
+
+def rightarm_from_leftarm(config):
+  right_from_left = np.array([-1, 1, -1, 1, -1, 1, 1])
+  return config*right_from_left
+
 ##################################################
 
 # TODO: distinguish between joints and positions better
@@ -173,10 +199,14 @@ def Conf(tree):
     return tree.getZeroConfiguration()
 
 def set_zero_positions(tree, q, position_ids):
-    q[position_ids] = tree.getZeroConfigurations()[position_ids]
+    values = tree.getZeroConfigurations()[position_ids]
+    q[position_ids] = values
+    return values
 
 def set_random_positions(tree, q, position_ids):
-    q[position_ids] = tree.getRandomConfiguration()[position_ids]
+    values = tree.getRandomConfiguration()[position_ids]
+    q[position_ids] = values
+    return values
 
 ##################################################
 
@@ -299,6 +329,37 @@ def get_model_visual_aabb(tree, kin_cache, model_id):
 
 ##################################################
 
+def supports_body(top_body, bottom_body, epsilon=1e-2): # TODO: above / below
+    top_aabb = get_lower_upper(top_body)
+    bottom_aabb = get_lower_upper(bottom_body)
+    top_z_min = top_aabb[0][2]
+    bottom_z_max = bottom_aabb[1][2]
+    return (bottom_z_max <= top_z_min <= (bottom_z_max + epsilon)) and \
+           (aabb_contains(aabb2d_from_aabb(top_aabb), aabb2d_from_aabb(bottom_aabb)))
+
+def sample_placement(tree, object_id, surface_id, max_attempts=50):
+    # TODO: could also just do with center of mass
+    #com = tree.centerOfMass(tree.doKinematics(Conf()), object_id)
+    for _ in xrange(max_attempts):
+        q = Conf(tree)
+        [yaw] = set_random_positions(tree, q, get_position_ids(tree, [YAW_POSITION], object_id))
+        euler = Euler(yaw=yaw)
+        kin_cache = tree.doKinematics(q)
+
+        object_aabb = get_model_visual_aabb(tree, kin_cache, object_id)
+        surface_aabb = get_model_visual_aabb(tree, kin_cache, surface_id)
+        lower = (get_aabb_min(surface_aabb) + get_aabb_extent(object_aabb))[:2]
+        upper = (get_aabb_max(surface_aabb)  - get_aabb_extent(object_aabb))[:2]
+        if np.any(upper < lower):
+          continue
+        [x, y] = np.random.uniform(lower, upper)
+        z = (get_aabb_max(surface_aabb) + get_aabb_extent(object_aabb))[2]
+        point = Point(x, y, z) - get_aabb_center(object_aabb)
+        return Pose(point, euler)
+    return None
+
+##################################################
+
 def main():
     pr2_file = get_drake_file(PR2_URDF)
     table_file = get_drake_file(TABLE_SDF)
@@ -327,13 +388,19 @@ def main():
     print("Positions:", tree.get_num_positions())
     print("Velocities:", tree.get_num_velocities())
     for position_id in range(tree.get_num_positions()):
-        print(position_id, get_position_name(tree, position_id))
+        print(position_id, get_position_name(tree, position_id), 
+            get_min_position(tree, position_id), get_max_position(tree, position_id))
 
     print("Actuators:", tree.get_num_actuators())
 
     vis_helper = DrakeVisualizerHelper(tree)
 
     q = Conf(tree)
+    q[get_position_ids(tree, PR2_GROUPS['base'], pr2)] = [0, 0, np.pi/2]
+    q[get_position_ids(tree, PR2_GROUPS['torso'], pr2)] = [0.2]
+    q[get_position_ids(tree, PR2_GROUPS['left_arm'], pr2)] = REST_LEFT_ARM
+    q[get_position_ids(tree, PR2_GROUPS['right_arm'], pr2)] = rightarm_from_leftarm(REST_LEFT_ARM)
+
     set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block1))
     set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block2))
     print(table1, is_fixed_base(tree, table1))
@@ -351,9 +418,14 @@ def main():
     print(aabb)
     print(get_aabb_min(aabb))
 
+    while True:
+        vis_helper.draw(q)
+        #print('Positions:', q)
+        raw_input('Continue?')
+        print(set_random_positions(tree, q, get_position_ids(tree, PR2_GROUPS['base'], pr2)))
+        q[get_position_ids(tree, POSE_POSITIONS, block1)] = sample_placement(tree, block1, table1)
+        q[get_position_ids(tree, POSE_POSITIONS, block2)] = sample_placement(tree, block2, table2)
 
-    vis_helper.draw(q)
-    print('Positions:', q)
 
 
 if __name__ == '__main__':
