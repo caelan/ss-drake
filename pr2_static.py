@@ -191,7 +191,8 @@ def base_bodies_from_model_index(tree, model_index=-1):
 
 def get_model_base(tree, model_index):
     base_bodies = base_bodies_from_model_index(tree, model_index)
-    #assert(len(base_bodies) == 1) # TODO: should do this
+    #assert(len(base_bodies) == 1) # TODO: should make formal assumption that one root per URDF
+    # This is also why the pybullet URDF didn't work
     return base_bodies[0]
 
 def get_pose_positions(tree, model_index):
