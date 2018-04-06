@@ -255,7 +255,7 @@ def get_model_name(tree, model_id):
 def get_world_pose(tree, kin_cache, body_id):
     #base_index = 0
     #return tree.relativeTransform(kin_cache, base_index, body_index)
-    return tree.CalcBodyPoseInWorldFrame(kin_cache, get_body(tree, body_id))
+    return pose_from_tform(tree.CalcBodyPoseInWorldFrame(kin_cache, get_body(tree, body_id)))
 
 def get_drake_file(rel_path):
     return os.path.join(pydrake.getDrakePath(), rel_path)
@@ -264,24 +264,32 @@ def Conf(tree):
     return tree.getZeroConfiguration()
 
 def set_zero_positions(tree, q, position_ids):
-    values = tree.getZeroConfigurations()[position_ids]
-    q[position_ids] = values
-    return values
+    q[position_ids] = tree.getZeroConfigurations()[position_ids]
+    return q[position_ids]
 
 def set_random_positions(tree, q, position_ids):
-    values = tree.getRandomConfiguration()[position_ids] # TODO: switches to gaussian when not defined
-    q[position_ids] = values
-    return values
+    q[position_ids] = tree.getRandomConfiguration()[position_ids] # TODO: switches to gaussian when not defined
+    return q[position_ids]
 
 def set_min_positions(tree, q, position_ids):
-    values = [get_min_position(tree, position_id) for position_id in position_ids]
-    q[position_ids] = values
-    return values
+    q[position_ids] = [get_min_position(tree, position_id) for position_id in position_ids]
+    return q[position_ids]
 
 def set_max_positions(tree, q, position_ids):
-    values = [get_max_position(tree, position_id) for position_id in position_ids]
-    q[position_ids] = values
-    return values
+    q[position_ids] = [get_max_position(tree, position_id) for position_id in position_ids]
+    return q[position_ids]
+
+#def set_positions(tree, q, model_id, position_names, values):
+#    q[get_position_ids(tree, POSE_POSITIONS, model_id)] = values
+#
+#def set_positions(tree, q, model_id, position_names,values):
+#    q[get_position_ids(tree, POSE_POSITIONS, model_id)] = values
+
+def set_pose(tree, q, model_id, values):
+    q[get_position_ids(tree, POSE_POSITIONS, model_id)] = values
+
+def get_pose(tree, q, model_id):
+    return q[get_position_ids(tree, POSE_POSITIONS, model_id)]
 
 ##################################################
 
@@ -578,9 +586,16 @@ def get_top_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP
             grasps += [multiply_poses(tool_pose, translate, rotate_z, reflect_z)]
     return grasps
 
+
+def object_from_gripper(gripper_pose, grasp_pose):
+    return multiply_poses(gripper_pose, grasp_pose)
+
+def gripper_from_object(object_pose, grasp_pose):
+    return multiply_poses(object_pose, invert_pose(grasp_pose))
+
 ##################################################
 
-def inverse_kinematics(tree, frame_id, pose):
+def inverse_kinematics(tree, frame_id, pose, q_seed=None):
     print(point_from_pose(pose))
     print(euler_from_pose(pose))
     print(frame_id)
@@ -634,9 +649,10 @@ def inverse_kinematics(tree, frame_id, pose):
     ]
     # Constraints are hard (i.e. cannot violate)
 
-    q_seed = tree.getZeroConfiguration()
+    if q_seed is None:
+        q_seed = tree.getZeroConfiguration()
     options = ik.IKoptions(tree)
-    print(options.getQ())
+    #print(options.getQ()) # TODO: implement and use to set weight function
     results = ik.InverseKin(tree, q_seed, q_seed, constraints, options)
 
     # Each entry (only one is present in this case, since InverseKin()
@@ -726,23 +742,43 @@ def main():
     q = Conf(tree)
     q[get_position_ids(tree, PR2_GROUPS['base'], pr2)] = [0, 0, 0]
     q[get_position_ids(tree, PR2_GROUPS['torso'], pr2)] = [0.2]
-    q[get_position_ids(tree, PR2_GROUPS['left_arm'], pr2)] = REST_LEFT_ARM
+    #q[get_position_ids(tree, PR2_GROUPS['left_arm'], pr2)] = REST_LEFT_ARM
+    q[get_position_ids(tree, PR2_GROUPS['left_arm'], pr2)] = TOP_HOLDING_LEFT_ARM
+
     q[get_position_ids(tree, PR2_GROUPS['right_arm'], pr2)] = rightarm_from_leftarm(REST_LEFT_ARM)
     set_max_positions(tree, q, get_position_ids(tree, PR2_GROUPS['left_gripper'], pr2))
     set_max_positions(tree, q, get_position_ids(tree, PR2_GROUPS['right_gripper'], pr2))
     
-    q[get_position_ids(tree, POSE_POSITIONS, block1)] = sample_placement(tree, block1, table1)
-    q[get_position_ids(tree, POSE_POSITIONS, block2)] = sample_placement(tree, block2, table2)
+    set_pose(tree, q, block1, sample_placement(tree, block1, table1))
+    set_pose(tree, q, block2, sample_placement(tree, block2, table2))
     #set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block1))
     #set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block2))
     print(table1, is_fixed_base(tree, table1))
     print(block1, is_fixed_base(tree, block1))
 
-    print(get_top_grasps(tree, block1))
+    grasp = get_top_grasps(tree, block1)[0]
+    #gripper_id = get_frame_from_name(tree, PR2_TOOL_FRAMES['left_gripper'], pr2).get_frame_index()
+    gripper_id = get_body_from_name(tree, PR2_TOOL_FRAMES['left_gripper'], pr2).get_body_index()
+
+    gripper_pose = get_world_pose(tree, tree.doKinematics(q), gripper_id)
+    print(gripper_pose)
+    set_pose(tree, q, block1, object_from_gripper(gripper_pose, grasp))
+    vis_helper.draw(q)
+    return
+
+
+    block1_pose = get_pose(tree, q, block1)
+    print(grasp)
+    print(block1_pose)
+    target_gripper_pose = gripper_from_object(block1_pose, grasp)
+    print(gripper_pose)
 
     frame_id = get_frame_from_name(tree, PR2_TOOL_FRAMES['left_gripper'], pr2).get_frame_index()
-    #print(inverse_kinematics(tree, frame_id, Pose()))
-    #return
+    solution = inverse_kinematics(tree, frame_id, target_gripper_pose, q_seed=q)
+    if solution is None:
+        return
+    vis_helper.draw(solution)
+    return
 
     position_limits = [PR2_LIMITS.get(get_position_name(tree, position_id),
                                       get_position_limits(tree, position_id))
