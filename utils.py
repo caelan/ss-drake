@@ -741,8 +741,8 @@ def main():
     print(get_top_grasps(tree, block1))
 
     frame_id = get_frame_from_name(tree, PR2_TOOL_FRAMES['left_gripper'], pr2).get_frame_index()
-    print(inverse_kinematics(tree, frame_id, Pose()))
-    return
+    #print(inverse_kinematics(tree, frame_id, Pose()))
+    #return
 
     position_limits = [PR2_LIMITS.get(get_position_name(tree, position_id),
                                       get_position_limits(tree, position_id))
@@ -752,8 +752,8 @@ def main():
     print(position_limits)
 
     position_ids = get_position_ids(tree, PR2_GROUPS['base'], pr2)
-    #goal_values = [4, 0, 3*np.pi/2]
-    goal_values = [1, 0, 3*np.pi/2]
+    goal_values = [4, 0, 3*np.pi/2]
+    #goal_values = [1, 0, 3*np.pi/2]
     start_time = time.time()
     path = plan_motion(tree, q, position_ids, goal_values, position_limits=position_limits,
                        collision_filter=disabled_collision_filter, model_ids=[pr2, table1])
