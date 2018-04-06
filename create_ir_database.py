@@ -1,5 +1,8 @@
 from utils import *
 import pickle
+import random
+
+from pydrake.multibody.rigid_body_tree import RigidBodyTree, AddFlatTerrainToWorld
 
 DATABASES_DIR = 'databases'
 IR_FILENAME = '{}_{}_ir.pickle'
@@ -21,16 +24,17 @@ def create_inverse_reachability(tree, robot_id, object_id, table_id, arm_name, g
         default_q = Conf(tree)
     vis_helper = DrakeVisualizerHelper(tree)
 
-    #gripper_id = get_frame_from_name(tree, PR2_TOOL_FRAMES['left_gripper'], robot_id).get_frame_index()
-    gripper_id = get_body_from_name(tree, PR2_TOOL_FRAMES['{}_gripper'.format(arm_name)], robot_id).get_body_index()
-
+    gripper = get_body_from_name(tree, PR2_TOOL_FRAMES['{}_gripper'.format(arm_name)], robot_id)
+    gripper_id = gripper.get_body_index()
     position_names = PR2_GROUPS['{}_arm'.format(arm_name)] #+ PR2_GROUPS['torso'] + PR2_GROUPS['base']
     position_ids = get_position_ids(tree, position_names, robot_id)
 
     grasp_info = GRASP_NAMES[grasp_name] 
     grasps = grasp_info.get_grasps(tree, object_id)
     gripper_from_base_list = []
+    iteration = 0
     while len(gripper_from_base_list) < num_samples:
+        iteration += 1
         q_approach = default_q.copy()
         object_pose = sample_placement(tree, object_id, table_id)
         if object_pose is None:
@@ -61,8 +65,8 @@ def create_inverse_reachability(tree, robot_id, object_id, table_id, arm_name, g
         gripper_from_base = multiply_poses(invert_pose(gripper_pose), 
             pose_from_pose2d(base_pose2d))
         gripper_from_base_list.append(gripper_from_base)
-        print('{} / {}'.format(len(gripper_from_base_list), num_samples))
-        raw_input('Continue?')
+        print('Iteration {} | {} / {}'.format(iteration, len(gripper_from_base_list), num_samples))
+        #raw_input('Continue?')
 
     filename = IR_FILENAME.format(grasp_name, arm_name)
     path = os.path.join(DATABASES_DIR, filename)
@@ -92,6 +96,10 @@ def main():
     block1 = add_model(tree, block_file, fixed_base=False)
     AddFlatTerrainToWorld(tree, box_size=10, box_depth=.1) # Adds visual & collision
 
+    #revolute = [name in PR2_REVOLUTE for name in get_position_names(tree, range(tree.get_num_positions()))]
+    #print(revolute)
+    #return
+
     q = Conf(tree)
     q[get_position_ids(tree, PR2_GROUPS['base'], pr2)] = [0, 0, 0]
     q[get_position_ids(tree, PR2_GROUPS['torso'], pr2)] = [0.2]
@@ -100,6 +108,8 @@ def main():
     set_max_positions(tree, q, get_position_ids(tree, PR2_GROUPS['left_gripper'], pr2))
     set_max_positions(tree, q, get_position_ids(tree, PR2_GROUPS['right_gripper'], pr2))
     set_pose(tree, q, block1, sample_placement(tree, block1, table1))
+    q = wrap_positions(tree, q, revolute_names=PR2_REVOLUTE)
+
 
     create_inverse_reachability(tree, pr2, block1, table1, 'left', 'top', num_samples=5, default_q=q)
     
