@@ -5,6 +5,10 @@ import os
 import numpy as np
 import pydrake
 import time
+import random
+
+from collections import namedtuple
+
 from pydrake.multibody.parsers import PackageMap
 from pydrake.multibody.rigid_body_tree import (
     AddModelInstanceFromUrdfStringSearchingInRosPackages,
@@ -24,6 +28,7 @@ from pydrake.systems.framework import BasicVector, DiagramBuilder
 # declaring this as a drake_py_unittest in the BUILD.bazel file.
 from motion_planners.rrt_connect import birrt, direct_path
 from pydrake.solvers import ik
+from transformations import euler_matrix, euler_from_matrix
 
 from pr2_self_collision import PR2_COLLISION_PAIRS, INITIAL_COLLISION_PAIRS
 
@@ -39,6 +44,9 @@ EULER_POSITIONS = [ROLL_POSITION, PITCH_POSITION, YAW_POSITION]
 POSE_POSITIONS = POINT_POSITIONS + EULER_POSITIONS
 POSE2D_POSITIONS = [X_POSITION, Y_POSITION, YAW_POSITION]
 
+#EULER_AXES = 'rxyz'
+EULER_AXES = 'sxyz'
+
 def Point(x=0., y=0., z=0.):
     return np.array([x, y, z])
 
@@ -50,6 +58,9 @@ def Pose(point=None, euler=None):
     euler = Euler() if euler is None else euler
     return np.concatenate([point, euler])
 
+def Pose2d(x=0., y=0., yaw=0.):
+    return np.array([x, y, yaw])
+
 def point_from_pose(pose):
     return pose[:3]
 
@@ -59,13 +70,11 @@ def euler_from_pose(pose):
 def point_euler_from_pose(pose):
     return point_from_pose(pose), euler_from_pose(pose)
 
-from transformations import euler_matrix, euler_from_matrix
-
 def rot_from_euler(euler):
-    return euler_matrix(*euler, axes='rxyz')[:3,:3] # TODO: confirm this is what I want
+    return euler_matrix(*euler, axes=EULER_AXES)[:3,:3] # TODO: confirm this is what I want
 
 def euler_from_rot(rot):
-    return np.array(euler_from_matrix(rot, axes='rxyz'))
+    return np.array(euler_from_matrix(rot, axes=EULER_AXES))
 
 def tform_from_pose(pose):
     tform = np.eye(4)
@@ -90,6 +99,29 @@ def multiply_poses(*poses):
 
 def invert_pose(pose):
     return pose_from_tform(np.linalg.inv(tform_from_pose(pose)))
+
+def unit_from_theta(theta):
+    return np.array([np.cos(theta), np.sin(theta)])
+
+def wrap_angle(theta):
+    return (theta + np.pi) % (2 * np.pi) - np.pi
+
+def circular_difference(theta2, theta1):
+    return wrap_angle(theta2 - theta1)
+
+def pose2d_from_pose(pose):
+    x, y, z = point_from_pose(pose)
+    roll, pitch, yaw = euler_from_pose(pose)
+    assert (abs(roll) < 1e-3) and (abs(pitch) < 1e-3)
+    return np.array([x, y, yaw])
+
+def pose_from_pose2d(pose2d, default_pose=None):
+    if default_pose is None:
+        default_pose = Pose()
+    x, y, yaw = pose2d
+    _, _, z = point_from_pose(default_pose)
+    roll, pitch, _ = euler_from_pose(default_pose)
+    return Pose(Point(x, y, z), Euler(roll, pitch, yaw))
 
 ##################################################
 
@@ -119,15 +151,15 @@ PR2_TOOL_FRAMES = {
 TRANSLATION_LIMITS = (-10, 10)
 REVOLUTE_LIMITS = (-np.pi, np.pi)
 
+# TODO: obtain from joint info
+PR2_REVOLUTE = ['theta', 'r_forearm_roll_joint', 'r_wrist_roll_joint', 'l_forearm_roll_joint', 'l_wrist_roll_joint']
 PR2_LIMITS = {
     'x': TRANSLATION_LIMITS,
     'y': TRANSLATION_LIMITS,
-    'theta': REVOLUTE_LIMITS,
-    'r_forearm_roll_joint': REVOLUTE_LIMITS,
-    'r_wrist_roll_joint': REVOLUTE_LIMITS,
-    'l_forearm_roll_joint': REVOLUTE_LIMITS,
-    'l_wrist_roll_joint': REVOLUTE_LIMITS,
 }
+for joint_name in PR2_REVOLUTE:
+    PR2_LIMITS[joint_name] = REVOLUTE_LIMITS
+
 
 PR2_TOOL_TFORM = np.array([[0., 0., 1., 0.18],
                            [0., 1., 0., 0.],
@@ -605,18 +637,24 @@ def get_side_grasps(tree, model_id, under=False, limits=False, grasp_length=GRAS
         grasps += [multiply_poses(tool_pose, translate, rotate_z, swap_xz)]
   return grasps
 
-def get_x_presses(body, max_orientations=1): # g_f_o
-  pose = get_pose(body)
-  set_pose(body, unit_pose())
-  center, (w, l, h) = get_center_extent(body)
-  press_poses = []
-  for j in xrange(max_orientations):
-      swap_xz = (unit_point(), quat_from_euler([0, -np.pi/2 + j*np.pi, 0]))
-      translate = ([0, 0, w / 2], unit_quat())
-      press_poses += [multiply(TOOL_POSE, translate, swap_xz)]
-  set_pose(body, pose)
-  return press_poses
+# def get_x_presses(body, max_orientations=1): # g_f_o
+#   pose = get_pose(body)
+#   set_pose(body, unit_pose())
+#   center, (w, l, h) = get_center_extent(body)
+#   press_poses = []
+#   for j in xrange(max_orientations):
+#       swap_xz = (unit_point(), quat_from_euler([0, -np.pi/2 + j*np.pi, 0]))
+#       translate = ([0, 0, w / 2], unit_quat())
+#       press_poses += [multiply(TOOL_POSE, translate, swap_xz)]
+#   set_pose(body, pose)
+#   return press_poses
 
+GraspInfo = namedtuple('GraspInfo', ['get_grasps', 'carry_values'])
+
+GRASP_NAMES = {
+    'top': GraspInfo(get_top_grasps, TOP_HOLDING_LEFT_ARM),
+    'side': GraspInfo(get_side_grasps, SIDE_HOLDING_LEFT_ARM),
+}
 
 def object_from_gripper(gripper_pose, grasp_pose):
     return multiply_poses(gripper_pose, grasp_pose)
@@ -632,62 +670,48 @@ def close_pr2_gripper(tree, q, model_id, gripper_name):
 
 ##################################################
 
-def inverse_kinematics(tree, frame_id, pose, q_seed=None):
-    print(point_from_pose(pose))
-    print(euler_from_pose(pose))
-    print(frame_id)
+def inverse_kinematics(tree, frame_id, pose, position_ids=None, q_seed=None, epsilon=0):
+    if q_seed is None:
+        q_seed = tree.getZeroConfiguration()
+    if position_ids is None:
+        position_ids = range(tree.get_num_positions())
+    position_ids = set(position_ids)
+
+    indices = range(tree.get_num_positions())
+    lower_limits = [get_min_position(tree, position_id) if (position_id in position_ids) else q_seed[position_id] 
+        for position_id in indices]
+    upper_limits = [get_max_position(tree, position_id) if (position_id in position_ids) else q_seed[position_id] 
+        for position_id in indices]
+    posture_constraint = ik.PostureConstraint(tree)
+    posture_constraint.setJointLimits(indices, lower_limits, upper_limits)
+
+    min_distance = 0
+    active_bodies_idx = []
+    active_group_names = set()
 
     constraints = [
-        # These three constraints ensure that the base of the robot is
-        # at z = 0 and has no pitch or roll. Instead of directly
-        # constraining orientation, we just require that the points at
-        # [0, 0, 0], [1, 0, 0], and [0, 1, 0] in the robot's base's
-        # frame must all be at z = 0 in world frame.
-        # We don't care about the x or y position of the robot's base,
+        posture_constraint,
+
         # so we use NaN values to tell the IK solver not to apply a
         # constraint along those dimensions. This is equivalent to
         # placing a lower bound of -Inf and an upper bound of +Inf along
         # those axes.
-        # ik.WorldPositionConstraint(robot, base_body_id,
-        #                            np.array([0.0, 0.0, 0.0]),
-        #                            np.array([np.nan, np.nan, 0.0]),
-        #                            np.array([np.nan, np.nan, 0.0])),
-        # ik.WorldPositionConstraint(robot, base_body_id,
-        #                            np.array([1.0, 0.0, 0.0]),
-        #                            np.array([np.nan, np.nan, 0.0]),
-        #                            np.array([np.nan, np.nan, 0.0])),
-        # ik.WorldPositionConstraint(robot, base_body_id,
-        #                            np.array([0.0, 1.0, 0.0]),
-        #                            np.array([np.nan, np.nan, 0.0]),
-        #                            np.array([np.nan, np.nan, 0.0])),
-
-        # This constraint exactly specifies the desired position of the
-        # hand frame we defined earlier.
-
-
         ik.WorldPositionConstraint(tree, frame_id,
                                    np.array([0.0, 0.0, 0.0]),
-                                   point_from_pose(pose),  # lower bound
-                                   point_from_pose(pose)), # upper bound
-
-        # And this specifies the orientation of that frame
+                                   point_from_pose(pose) - epsilon*np.zeros(3),  # lower bound
+                                   point_from_pose(pose) + epsilon*np.zeros(3)), # upper bound
         ik.WorldEulerConstraint(tree, frame_id,
-                                euler_from_pose(pose),  # lower bound
-                                euler_from_pose(pose)) # upper bound
+                                euler_from_pose(pose) - epsilon*np.zeros(3),  # lower bound
+                                euler_from_pose(pose) + epsilon*np.zeros(3)), # upper bound
 
-        #ik.MinDistanceConstraint(robot, hand_frame_id,
-        #                        min_distance,
+        #ik.MinDistanceConstraint(tree, # TODO: doesn't seem to work yet
+        #                         min_distance,
         #                         active_bodies_idx,
-        #                         active_group_names)  # upper bound
-        # default
-
+        #                         active_group_names),
         # TODO: make a group for each unique object
-
     ]
     # Constraints are hard (i.e. cannot violate)
 
-    if q_seed is None:
-        q_seed = tree.getZeroConfiguration()
     options = ik.IKoptions(tree)
     #print(options.getQ()) # TODO: implement and use to set weight function
     results = ik.InverseKin(tree, q_seed, q_seed, constraints, options)
@@ -695,21 +719,17 @@ def inverse_kinematics(tree, frame_id, pose, q_seed=None):
     # Each entry (only one is present in this case, since InverseKin()
     # only returns a single result) in results.info gives the output
     # status of SNOPT. info = 1 is good, anything less than 10 is OK, and
-    # any info >= 10 indicates an infeasibility or failure of the
-    # optimizer.
-    #assert results.info[0] == 1
-    print(results.q_sol)
-    print(results.info) # http://drake.mit.edu/doxygen_cxx/rigid__body__ik_8h_source.html
-    print(results.infeasible_constraints)
-    print(q_seed.shape)
-    print(results.q_sol[0].shape)
-
-    # TODO: use Na on the configurations to constrain
+    # any info >= 10 indicates an infeasibility or failure of the optimizer.
     # TODO: can constraint Q weight by modifying the option
 
-    if not results.q_sol:
-        return None
-    return results.q_sol[0]
+    # TODO: check that the solution is close enough here
+
+    [info] = results.info
+    success = (info < 10) # http://drake.mit.edu/doxygen_cxx/rigid__body__ik_8h_source.html
+    print('Success: {} | Info: {} | Infeasible: {}'.format(success, info, len(results.infeasible_constraints)))
+    if success:
+        return results.q_sol[0]
+    return None
 
     """
     IKResults,
@@ -735,6 +755,15 @@ def inverse_kinematics(tree, frame_id, pose, q_seed=None):
     # InverseKinPointwise
     # InverseKinTraj
     # IKResults
+
+##################################################
+
+def sample_nearby_pose2d(target_point, radius_range=(0.25, 1.0)):
+    radius = np.random.uniform(*radius_range)
+    theta = np.random.uniform(*REVOLUTE_LIMITS)
+    x, y = radius*unit_from_theta(theta) + target_point[:2]
+    yaw = np.random.uniform(*REVOLUTE_LIMITS)
+    return Pose2d(x, y, yaw)
 
 ##################################################
 
@@ -793,6 +822,10 @@ def main():
     print(table1, is_fixed_base(tree, table1))
     print(block1, is_fixed_base(tree, block1))
 
+
+    create_inverse_reachability(tree, pr2, block1, table1, 'left', 'top', num_samples=500)
+    return
+
     grasps = get_top_grasps(tree, block1)
     #grasps = get_side_grasps(tree, block1)
 
@@ -800,13 +833,13 @@ def main():
     gripper_id = get_body_from_name(tree, PR2_TOOL_FRAMES['left_gripper'], pr2).get_body_index()
     gripper_pose = get_world_pose(tree, tree.doKinematics(q), gripper_id)
 
-    for grasp in grasps:
-        set_pose(tree, q, block1, object_from_gripper(gripper_pose, grasp))
-        vis_helper.draw(q)
-        raw_input('Continue?')
-    return
+    #for grasp in grasps:
+    #    set_pose(tree, q, block1, object_from_gripper(gripper_pose, grasp))
+    #    vis_helper.draw(q)
+    #    raw_input('Continue?')
+    #return
 
-
+    grasp = grasps[0]
     block1_pose = get_pose(tree, q, block1)
     print(grasp)
     print(block1_pose)
@@ -814,7 +847,13 @@ def main():
     print(gripper_pose)
 
     frame_id = get_frame_from_name(tree, PR2_TOOL_FRAMES['left_gripper'], pr2).get_frame_index()
-    solution = inverse_kinematics(tree, frame_id, target_gripper_pose, q_seed=q)
+    start_time = time.time()
+    #position_ids = get_position_ids(tree, PR2_GROUPS['base'], pr2)
+    #position_ids = get_position_ids(tree, PR2_GROUPS['left_arm'], pr2)
+    position_ids = get_position_ids(tree, PR2_GROUPS['base'] + PR2_GROUPS['left_arm'], pr2)
+    #position_ids = None
+    solution = inverse_kinematics(tree, frame_id, target_gripper_pose, position_ids=position_ids, q_seed=q)
+    print(time.time()-start_time)
     if solution is None:
         return
     vis_helper.draw(solution)
