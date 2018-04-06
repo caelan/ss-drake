@@ -4,6 +4,7 @@ import re
 import os
 import numpy as np
 import pydrake
+import time
 from pydrake.multibody.parsers import PackageMap
 from pydrake.multibody.rigid_body_tree import (
     AddModelInstanceFromUrdfStringSearchingInRosPackages,
@@ -415,9 +416,13 @@ def are_colliding(tree, kin_cache, collision_filter=all_collision_filter, **kwar
             return True
     return False
 
+def violates_limits(tree, q):
+    return np.any(q < tree.joint_limit_min) or np.any(tree.joint_limit_max < q)
+
 ##################################################
 
-def plan_motion(initial_conf, position_ids, end_values, obstacles=None, direct=False, **kwargs):
+def plan_motion(tree, initial_conf, position_ids, end_values, 
+        collision_filter=all_collision_filter, model_ids=None, linear_only=False, **kwargs):
     assert len(position_ids) == len(end_values)
 
     # TODO: pass in limits
@@ -450,17 +455,17 @@ def plan_motion(initial_conf, position_ids, end_values, obstacles=None, direct=F
             # TODO: should wrap these joints
 
     def collision_fn(q):
-        return False
-
-        if violates_limits(body, joints, q):
+        # Need to pass the pr2 in to this
+        current_conf = initial_conf.copy()
+        current_conf[position_ids] = q
+        if violates_limits(tree, current_conf):
             return True
-        set_joint_positions(body, joints, q)
-        if obstacles is None:
-            return env_collision(body)
-        return any(pairwise_collision(body, obs) for obs in obstacles)
-
+        tree.doKinematics(current_conf)
+        return are_colliding(tree, tree.doKinematics(current_conf), 
+            collision_filter=collision_filter, model_ids=model_ids)
+        
     start_values = initial_conf[position_ids]
-    if direct:
+    if linear_only:
         return direct_path(start_values, end_values, extend_fn, collision_fn)
     return birrt(start_values, end_values, distance_fn,
                  sample_fn, extend_fn, collision_fn, **kwargs)
@@ -514,22 +519,33 @@ def main():
     q = Conf(tree)
     q[get_position_ids(tree, PR2_GROUPS['base'], pr2)] = [0, 0, 0]
     q[get_position_ids(tree, PR2_GROUPS['torso'], pr2)] = [0.2]
-    #q[get_position_ids(tree, PR2_GROUPS['left_arm'], pr2)] = REST_LEFT_ARM
-    #q[get_position_ids(tree, PR2_GROUPS['right_arm'], pr2)] = rightarm_from_leftarm(REST_LEFT_ARM)
+    q[get_position_ids(tree, PR2_GROUPS['left_arm'], pr2)] = REST_LEFT_ARM
+    q[get_position_ids(tree, PR2_GROUPS['right_arm'], pr2)] = rightarm_from_leftarm(REST_LEFT_ARM)
     set_max_positions(tree, q, get_position_ids(tree, PR2_GROUPS['left_gripper'], pr2))
     set_max_positions(tree, q, get_position_ids(tree, PR2_GROUPS['right_gripper'], pr2))
-
-    set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block1))
-    set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block2))
+    
+    q[get_position_ids(tree, POSE_POSITIONS, block1)] = sample_placement(tree, block1, table1)
+    q[get_position_ids(tree, POSE_POSITIONS, block2)] = sample_placement(tree, block2, table2)
+    #set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block1))
+    #set_random_positions(tree, q, get_position_ids(tree, POSE_POSITIONS, block2))
     print(table1, is_fixed_base(tree, table1))
     print(block1, is_fixed_base(tree, block1))
 
     position_ids = get_position_ids(tree, PR2_GROUPS['base'], pr2)
-    path = plan_motion(q, position_ids, [2, 2, np.pi/2])
-    for values in path:
-        q[position_ids] = values
-        vis_helper.draw(q)
-        raw_input('Continue?')
+    goal_values = [4, 0, 3*np.pi/2]
+    #goal_values = [0, 0, 3*np.pi/2]
+    start_time = time.time()
+    path = plan_motion(tree, q, position_ids, goal_values, disabled_collision_filter, model_ids=[pr2, table1])
+    print(path)
+    print(time.time()-start_time)
+    if path is not None:
+        for values in path:
+            q[position_ids] = values
+            vis_helper.draw(q)
+            raw_input('Continue?')
+
+    # ComputeMaximumDepthCollisionPoints
+    # Use ComputeMaximumDepthCollisionPoints instead
 
 
     # body.ComputeWorldFixedPose()
