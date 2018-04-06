@@ -580,7 +580,10 @@ def get_top_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP
 
 ##################################################
 
-def inverse_kinematics(robot, frame_id, pose):
+def inverse_kinematics(tree, frame_id, pose):
+    print(point_from_pose(pose))
+    print(euler_from_pose(pose))
+    print(frame_id)
 
     constraints = [
         # These three constraints ensure that the base of the robot is
@@ -608,14 +611,17 @@ def inverse_kinematics(robot, frame_id, pose):
 
         # This constraint exactly specifies the desired position of the
         # hand frame we defined earlier.
-        ik.WorldPositionConstraint(robot, frame_id,
+
+
+        ik.WorldPositionConstraint(tree, frame_id,
                                    np.array([0.0, 0.0, 0.0]),
-                                   np.array([0.5, 0.0, 0.6]),  # lower bound
-                                   np.array([0.5, 0.0, 0.6])), # upper bound
+                                   point_from_pose(pose),  # lower bound
+                                   point_from_pose(pose)), # upper bound
+
         # And this specifies the orientation of that frame
-        ik.WorldEulerConstraint(robot, frame_id,
-                                np.array([0.0, 0.0, 0.0]), # lower bound
-                                np.array([0.0, 0.0, 0.0])) # upper bound
+        ik.WorldEulerConstraint(tree, frame_id,
+                                euler_from_pose(pose),  # lower bound
+                                euler_from_pose(pose)) # upper bound
 
         #ik.MinDistanceConstraint(robot, hand_frame_id,
         #                        min_distance,
@@ -628,18 +634,29 @@ def inverse_kinematics(robot, frame_id, pose):
     ]
     # Constraints are hard (i.e. cannot violate)
 
-    q_seed = robot.getZeroConfiguration()
-    options = ik.IKoptions(robot)
-    results = ik.InverseKin(robot, q_seed, q_seed, constraints, options)
+    q_seed = tree.getZeroConfiguration()
+    options = ik.IKoptions(tree)
+    print(options.getQ())
+    results = ik.InverseKin(tree, q_seed, q_seed, constraints, options)
 
     # Each entry (only one is present in this case, since InverseKin()
     # only returns a single result) in results.info gives the output
     # status of SNOPT. info = 1 is good, anything less than 10 is OK, and
     # any info >= 10 indicates an infeasibility or failure of the
     # optimizer.
-    assert results.info[0] == 1
-    print("Solution")
-    print(repr(results.q_sol[0]))
+    #assert results.info[0] == 1
+    print(results.q_sol)
+    print(results.info) # http://drake.mit.edu/doxygen_cxx/rigid__body__ik_8h_source.html
+    print(results.infeasible_constraints)
+    print(q_seed.shape)
+    print(results.q_sol[0].shape)
+
+    # TODO: use Na on the configurations to constrain
+    # TODO: can constraint Q weight by modifying the option
+
+    if not results.q_sol:
+        return None
+    return results.q_sol[0]
 
     """
     IKResults,
@@ -722,6 +739,10 @@ def main():
     print(block1, is_fixed_base(tree, block1))
 
     print(get_top_grasps(tree, block1))
+
+    frame_id = get_frame_from_name(tree, PR2_TOOL_FRAMES['left_gripper'], pr2).get_frame_index()
+    print(inverse_kinematics(tree, frame_id, Pose()))
+    return
 
     position_limits = [PR2_LIMITS.get(get_position_name(tree, position_id),
                                       get_position_limits(tree, position_id))
