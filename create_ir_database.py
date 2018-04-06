@@ -1,8 +1,11 @@
-from utils import *
 import pickle
 import random
 
 from pydrake.multibody.rigid_body_tree import RigidBodyTree, AddFlatTerrainToWorld
+
+from pr2_utils import PR2_URDF, TABLE_SDF, BLOCK_URDF, PR2_TOOL_FRAMES, REST_LEFT_ARM, \
+    rightarm_from_leftarm, GRASP_NAMES, gripper_from_object, PR2_GROUPS, PR2_REVOLUTE
+from utils import *
 
 DATABASES_DIR = 'databases'
 IR_FILENAME = '{}_{}_ir.pickle'
@@ -35,6 +38,7 @@ def create_inverse_reachability(tree, robot_id, object_id, table_id, arm_name, g
     iteration = 0
     while len(gripper_from_base_list) < num_samples:
         iteration += 1
+        print('Iteration {} | {} / {}'.format(iteration, len(gripper_from_base_list), num_samples))
         q_approach = default_q.copy()
         object_pose = sample_placement(tree, object_id, table_id)
         if object_pose is None:
@@ -65,7 +69,6 @@ def create_inverse_reachability(tree, robot_id, object_id, table_id, arm_name, g
         gripper_from_base = multiply_poses(invert_pose(gripper_pose), 
             pose_from_pose2d(base_pose2d))
         gripper_from_base_list.append(gripper_from_base)
-        print('Iteration {} | {} / {}'.format(iteration, len(gripper_from_base_list), num_samples))
         #raw_input('Continue?')
 
     filename = IR_FILENAME.format(grasp_name, arm_name)

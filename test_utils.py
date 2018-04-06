@@ -3,13 +3,14 @@ import time
 import numpy as np
 
 from pr2_self_collision import PR2_COLLISION_PAIRS, INITIAL_COLLISION_PAIRS
-from utils import get_drake_file, PR2_URDF, TABLE_SDF, BLOCK_URDF, get_enabled_collision_filter, \
+from utils import get_drake_file, get_enabled_collision_filter, \
     get_disabled_collision_filter, add_model, Pose, Point, get_num_models, get_model_name, get_bodies, \
-    get_position_name, get_min_position, get_max_position, DrakeVisualizerHelper, Conf, get_position_ids, PR2_GROUPS, \
-    TOP_HOLDING_LEFT_ARM, rightarm_from_leftarm, REST_LEFT_ARM, set_max_positions, set_pose, sample_placement, \
-    is_fixed_base, get_top_grasps, get_body_from_name, PR2_TOOL_FRAMES, get_world_pose, get_pose, gripper_from_object, \
-    get_frame_from_name, inverse_kinematics, PR2_LIMITS, get_position_limits, plan_motion, are_colliding, \
+    get_position_name, get_min_position, get_max_position, DrakeVisualizerHelper, Conf, get_position_ids, \
+    set_max_positions, set_pose, sample_placement, \
+    is_fixed_base, get_body_from_name, get_world_pose, get_pose, get_frame_from_name, inverse_kinematics, get_position_limits, plan_motion, are_colliding, \
     other_collision_filter, set_random_positions, POSE_POSITIONS
+from pr2_utils import PR2_URDF, TABLE_SDF, BLOCK_URDF, PR2_GROUPS, PR2_TOOL_FRAMES, PR2_LIMITS, TOP_HOLDING_LEFT_ARM, \
+    REST_LEFT_ARM, rightarm_from_leftarm, get_top_grasps, gripper_from_object
 
 from pydrake.multibody.rigid_body_tree import RigidBodyTree, AddFlatTerrainToWorld
 
