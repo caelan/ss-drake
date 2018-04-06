@@ -23,6 +23,7 @@ from pydrake.systems.framework import BasicVector, DiagramBuilder
 # TODO(eric.cousineau): Use `unittest` (after moving `ik` into `multibody`),
 # declaring this as a drake_py_unittest in the BUILD.bazel file.
 from motion_planners.rrt_connect import birrt, direct_path
+from pydrake.solvers import ik
 
 from pr2_self_collision import PR2_COLLISION_PAIRS, INITIAL_COLLISION_PAIRS
 
@@ -38,10 +39,10 @@ EULER_POSITIONS = [ROLL_POSITION, PITCH_POSITION, YAW_POSITION]
 POSE_POSITIONS = POINT_POSITIONS + EULER_POSITIONS
 POSE2D_POSITIONS = [X_POSITION, Y_POSITION, YAW_POSITION]
 
-def Point(x=0, y=0, z=0):
+def Point(x=0., y=0., z=0.):
     return np.array([x, y, z])
 
-def Euler(roll=0, pitch=0, yaw=0):
+def Euler(roll=0., pitch=0., yaw=0.):
     return np.array([roll, pitch, yaw])
 
 def Pose(point=None, euler=None):
@@ -57,6 +58,38 @@ def euler_from_pose(pose):
 
 def point_euler_from_pose(pose):
     return point_from_pose(pose), euler_from_pose(pose)
+
+from transformations import euler_matrix, euler_from_matrix
+
+def rot_from_euler(euler):
+    return euler_matrix(*euler, axes='rxyz')[:3,:3] # TODO: confirm this is what I want
+
+def euler_from_rot(rot):
+    return np.array(euler_from_matrix(rot, axes='rxyz'))
+
+def tform_from_pose(pose):
+    tform = np.eye(4)
+    tform[:3, 3] = point_from_pose(pose)
+    tform[:3, :3] = rot_from_euler(euler_from_pose(pose))
+    return tform
+
+def point_from_tform(tform):
+    return tform[:3, 3]
+
+def rot_from_tform(tform):
+    return tform[:3, :3]
+
+def pose_from_tform(tform):
+    return Pose(point_from_tform(tform), euler_from_rot(rot_from_tform(tform)))
+
+def multiply_poses(*poses):
+    tform = np.eye(4)
+    for pose in poses:
+        tform = tform.dot(tform_from_pose(pose))
+    return pose_from_tform(tform)
+
+def invert_pose(pose):
+    return pose_from_tform(np.linalg.inv(tform_from_pose(pose)))
 
 ##################################################
 
@@ -76,11 +109,32 @@ PR2_GROUPS = {
         'l_gripper_l_finger_tip_joint', 'l_gripper_r_finger_tip_joint'],
     'right_gripper': ['r_gripper_l_finger_joint', 'r_gripper_r_finger_joint', 
         'r_gripper_l_finger_tip_joint', 'r_gripper_r_finger_tip_joint'],
-
 }
 
-PR2_TOOL_POSE = ([0.18, 0., 0.], [0., 0.70710678, 0., 0.70710678])
-PR2_TOOL_DIRECTION = [ 0., 0., 1.]
+PR2_TOOL_FRAMES = {
+    'left_gripper': 'l_gripper_palm_link', # l_gripper_tool_frame
+    'right_gripper': 'r_gripper_palm_link', # r_gripper_tool_frame
+}
+
+TRANSLATION_LIMITS = (-10, 10)
+REVOLUTE_LIMITS = (-np.pi, np.pi)
+
+PR2_LIMITS = {
+    'x': TRANSLATION_LIMITS,
+    'y': TRANSLATION_LIMITS,
+    'theta': REVOLUTE_LIMITS,
+    'r_forearm_roll_joint': REVOLUTE_LIMITS,
+    'r_wrist_roll_joint': REVOLUTE_LIMITS,
+    'l_forearm_roll_joint': REVOLUTE_LIMITS,
+    'l_wrist_roll_joint': REVOLUTE_LIMITS,
+}
+
+#PR2_TOOL_POSE = ([0.18, 0., 0.], [0., 0.70710678, 0., 0.70710678])
+PR2_TOOL_TFORM = np.array([[0., 0., 1., 0.18],
+                           [0., 1., 0., 0.],
+                           [-1., 0., 0., 0.],
+                           [0., 0., 0., 1.]])
+PR2_TOOL_DIRECTION = np.array([0., 0., 1.])
 
 TOP_HOLDING_LEFT_ARM = [0.67717021, -0.34313199, 1.2, -1.46688405, 1.24223229, -1.95442826, 2.22254125]
 SIDE_HOLDING_LEFT_ARM = [0.39277395, 0.33330058, 0., -1.52238431, 2.72170996, -1.21946936, -2.98914779]
@@ -95,9 +149,6 @@ def rightarm_from_leftarm(config):
 ##################################################
 
 # TODO: distinguish between joints and positions better
-
-def get_num_joints(tree):
-    return tree.get_num_positions() # number_of_positions
 
 def get_position_name(tree, position_id):
     return str(tree.get_position_name(position_id))
@@ -116,6 +167,9 @@ def get_position_id(tree, position_name, model_id=-1):
 def get_position_ids(tree, position_names, model_id=-1):
     return [get_position_id(tree, position_name, model_id) for position_name in position_names]
 
+#def get_num_joints(tree):
+#    return tree.get_num_positions() # number_of_positions
+
 #def get_joint_id(tree, joint_name, model_id=-1):
 #    return tree.findJointId(joint_name, model_id=model_id)
 
@@ -127,6 +181,10 @@ def get_min_position(tree, position_id):
 
 def get_max_position(tree, position_id):
     return tree.joint_limit_max[position_id]
+
+def get_position_limits(tree, position_id):
+    return get_min_position(tree, position_id), \
+           get_max_position(tree, position_id)
 
 def has_position_name(tree, position_name, model_id=-1):
     try:
@@ -377,15 +435,18 @@ def sample_placement(tree, object_id, surface_id, max_attempts=50, epsilon=1e-3)
     return None
 
 
-def colliding_bodies(tree, kin_cache, model_ids=None, min_distance=-1e-6):
+def colliding_bodies(tree, kin_cache, model_ids=None, min_distance=0):
     if model_ids is None:
         model_ids = range(get_num_models(tree))
     bodies = []
     for model_id in model_ids:
         bodies += get_bodies(tree, model_id)
-    body_ids = [body.get_body_index() for body in bodies]
-    phi, normal, xA, xB, bodyA_idx, bodyB_idx = tree.collisionDetect(kin_cache, body_ids, False)
-    return {(body_id1, body_id2) for distance, body_id1, body_id2 in zip(phi, bodyA_idx, bodyB_idx) if distance < min_distance}
+    #body_ids = [body.get_body_index() for body in bodies]
+    #phi, normal, xA, xB, bodyA_idx, bodyB_idx = tree.collisionDetect(kin_cache, body_ids, False)
+    #return {(body_id1, body_id2) for distance, body_id1, body_id2 in
+    #        zip(phi, bodyA_idx, bodyB_idx) if distance < min_distance}
+    xA, xB, bodyA_idx, bodyB_idx = tree.allCollisions(kin_cache, False)
+    return zip(bodyA_idx, bodyB_idx)
 
 all_collision_filter = lambda b1, b2: True
 none_collision_filter = lambda b1, b2: False
@@ -409,9 +470,16 @@ def get_enabled_collision_filter(enabled_pairs):
             ((b2.get_name(), b1.get_name()) in enabled_pairs)
     return fn
 
-def are_colliding(tree, kin_cache, collision_filter=all_collision_filter, **kwargs):
-    for body_id1, body_id2 in colliding_bodies(tree, kin_cache, **kwargs):
-        if collision_filter(get_body(tree, body_id1), get_body(tree, body_id2)):
+def are_colliding(tree, kin_cache, collision_filter=all_collision_filter, model_ids=None):
+    # TODO: could make a separate tree for these
+    if model_ids is None:
+        model_ids = range(get_num_models(tree))
+    for body_id1, body_id2 in colliding_bodies(tree, kin_cache, model_ids):
+        body1 = get_body(tree, body_id1)
+        body2 = get_body(tree, body_id2)
+        if (body1.get_model_instance_id() in model_ids) and \
+                (body2.get_model_instance_id() in model_ids) and \
+                collision_filter(body1, body2):
             #print(get_body(tree, body_id1).get_name(), get_body(tree, body_id2).get_name())
             return True
     return False
@@ -421,16 +489,23 @@ def violates_limits(tree, q):
 
 ##################################################
 
-def plan_motion(tree, initial_conf, position_ids, end_values, 
+def plan_motion(tree, initial_conf, position_ids, end_values, position_limits=None,
         collision_filter=all_collision_filter, model_ids=None, linear_only=False, **kwargs):
     assert len(position_ids) == len(end_values)
-
-    # TODO: pass in limits
+    if position_limits is None:
+        position_limits = zip(tree.joint_limit_min, tree.joint_limit_max)
+    assert(len(initial_conf) == len(position_limits))
 
     def sample_fn():
-        return tree.getRandomConfiguration()[position_ids]
+        sample = np.array([np.random.uniform(*position_limits[position_id])
+                         for position_id in position_ids])
+        #sample = tree.getRandomConfiguration()[position_ids]
+        print(sample)
+        return sample
+        #return tree.getRandomConfiguration()[position_ids]
 
     def difference_fn(q2, q1):
+        # TODO: revolute joints
         difference = []
         for joint, value2, value1 in zip(position_ids, q2, q1):
             #difference.append((value2 - value1) if is_circular(body, joint)
@@ -477,6 +552,121 @@ def load_disabled_collisions(srdf_file):
     for link1, link2, reason in re.findall(regex, srdf_string):
         disabled_collisions.update([(link1, link2), (link2, link1)])
     return disabled_collisions
+
+##################################################
+
+GRASP_LENGTH = 0.04
+#GRASP_LENGTH = 0.
+MAX_GRASP_WIDTH = 0.07
+
+def get_top_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP_LENGTH):
+    tool_pose = pose_from_tform(PR2_TOOL_TFORM)
+
+    aabb = get_model_visual_aabb(tree, tree.doKinematics(Conf(tree)), model_id)
+    w, l, h = 2*get_aabb_extent(aabb)
+    #print(get_aabb_center(aabb)) # TODO: incorporate
+    reflect_z = Pose(euler=Euler(pitch=np.pi))
+    translate = Pose(point=Point(z=(h / 2 - grasp_length)))
+    grasps = []
+    if not limits or (w <= MAX_GRASP_WIDTH):
+        for i in range(1 + under):
+            rotate_z = Pose(euler=Euler(yaw=(np.pi / 2 + i * np.pi)))
+            grasps += [multiply_poses(tool_pose, translate, rotate_z, reflect_z)]
+    if not limits or (l <= MAX_GRASP_WIDTH):
+        for i in range(1 + under):
+            rotate_z = Pose(euler=Euler(yaw=(i*np.pi)))
+            grasps += [multiply_poses(tool_pose, translate, rotate_z, reflect_z)]
+    return grasps
+
+##################################################
+
+def inverse_kinematics(robot, frame_id, pose):
+
+    constraints = [
+        # These three constraints ensure that the base of the robot is
+        # at z = 0 and has no pitch or roll. Instead of directly
+        # constraining orientation, we just require that the points at
+        # [0, 0, 0], [1, 0, 0], and [0, 1, 0] in the robot's base's
+        # frame must all be at z = 0 in world frame.
+        # We don't care about the x or y position of the robot's base,
+        # so we use NaN values to tell the IK solver not to apply a
+        # constraint along those dimensions. This is equivalent to
+        # placing a lower bound of -Inf and an upper bound of +Inf along
+        # those axes.
+        # ik.WorldPositionConstraint(robot, base_body_id,
+        #                            np.array([0.0, 0.0, 0.0]),
+        #                            np.array([np.nan, np.nan, 0.0]),
+        #                            np.array([np.nan, np.nan, 0.0])),
+        # ik.WorldPositionConstraint(robot, base_body_id,
+        #                            np.array([1.0, 0.0, 0.0]),
+        #                            np.array([np.nan, np.nan, 0.0]),
+        #                            np.array([np.nan, np.nan, 0.0])),
+        # ik.WorldPositionConstraint(robot, base_body_id,
+        #                            np.array([0.0, 1.0, 0.0]),
+        #                            np.array([np.nan, np.nan, 0.0]),
+        #                            np.array([np.nan, np.nan, 0.0])),
+
+        # This constraint exactly specifies the desired position of the
+        # hand frame we defined earlier.
+        ik.WorldPositionConstraint(robot, frame_id,
+                                   np.array([0.0, 0.0, 0.0]),
+                                   np.array([0.5, 0.0, 0.6]),  # lower bound
+                                   np.array([0.5, 0.0, 0.6])), # upper bound
+        # And this specifies the orientation of that frame
+        ik.WorldEulerConstraint(robot, frame_id,
+                                np.array([0.0, 0.0, 0.0]), # lower bound
+                                np.array([0.0, 0.0, 0.0])) # upper bound
+
+        #ik.MinDistanceConstraint(robot, hand_frame_id,
+        #                        min_distance,
+        #                         active_bodies_idx,
+        #                         active_group_names)  # upper bound
+        # default
+
+        # TODO: make a group for each unique object
+
+    ]
+    # Constraints are hard (i.e. cannot violate)
+
+    q_seed = robot.getZeroConfiguration()
+    options = ik.IKoptions(robot)
+    results = ik.InverseKin(robot, q_seed, q_seed, constraints, options)
+
+    # Each entry (only one is present in this case, since InverseKin()
+    # only returns a single result) in results.info gives the output
+    # status of SNOPT. info = 1 is good, anything less than 10 is OK, and
+    # any info >= 10 indicates an infeasibility or failure of the
+    # optimizer.
+    assert results.info[0] == 1
+    print("Solution")
+    print(repr(results.q_sol[0]))
+
+    """
+    IKResults,
+    IKoptions,
+    InverseKin,
+    InverseKinTraj,
+    InverseKinPointwise,
+    PostureConstraint,
+    RelativePositionConstraint,
+    RelativeQuatConstraint,
+    WorldEulerConstraint,
+    WorldQuatConstraint,
+    WorldGazeDirConstraint,
+    WorldGazeTargetConstraint,
+    RelativeGazeDirConstraint,
+    MinDistanceConstraint,
+    QuasiStaticConstraint,
+    """
+    # http://drake.mit.edu/doxygen_cxx/inverse__kinematics_8cc.html
+    # http://drake.mit.edu/doxygen_cxx/rigid__body__ik_8h.html
+
+    # IKoptions
+    # InverseKinPointwise
+    # InverseKinTraj
+    # IKResults
+
+##################################################
 
 def main():
     #pr2_file = 'pr2_simplified.urdf'
@@ -531,11 +721,21 @@ def main():
     print(table1, is_fixed_base(tree, table1))
     print(block1, is_fixed_base(tree, block1))
 
+    print(get_top_grasps(tree, block1))
+
+    position_limits = [PR2_LIMITS.get(get_position_name(tree, position_id),
+                                      get_position_limits(tree, position_id))
+                       for position_id in range(tree.get_num_positions())]
+
+
+    print(position_limits)
+
     position_ids = get_position_ids(tree, PR2_GROUPS['base'], pr2)
-    goal_values = [4, 0, 3*np.pi/2]
-    #goal_values = [0, 0, 3*np.pi/2]
+    #goal_values = [4, 0, 3*np.pi/2]
+    goal_values = [1, 0, 3*np.pi/2]
     start_time = time.time()
-    path = plan_motion(tree, q, position_ids, goal_values, disabled_collision_filter, model_ids=[pr2, table1])
+    path = plan_motion(tree, q, position_ids, goal_values, position_limits=position_limits,
+                       collision_filter=disabled_collision_filter, model_ids=[pr2, table1])
     print(path)
     print(time.time()-start_time)
     if path is not None:
