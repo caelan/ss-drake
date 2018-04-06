@@ -112,8 +112,8 @@ PR2_GROUPS = {
 }
 
 PR2_TOOL_FRAMES = {
-    'left_gripper': 'l_gripper_palm_link', # l_gripper_tool_frame
-    'right_gripper': 'r_gripper_palm_link', # r_gripper_tool_frame
+    'left_gripper': 'l_gripper_palm_link', # l_gripper_palm_link | l_gripper_tool_frame
+    'right_gripper': 'r_gripper_palm_link', # r_gripper_palm_link | r_gripper_tool_frame
 }
 
 TRANSLATION_LIMITS = (-10, 10)
@@ -129,7 +129,6 @@ PR2_LIMITS = {
     'l_wrist_roll_joint': REVOLUTE_LIMITS,
 }
 
-#PR2_TOOL_POSE = ([0.18, 0., 0.], [0., 0.70710678, 0., 0.70710678])
 PR2_TOOL_TFORM = np.array([[0., 0., 1., 0.18],
                            [0., 1., 0., 0.],
                            [-1., 0., 0., 0.],
@@ -569,6 +568,7 @@ MAX_GRASP_WIDTH = 0.07
 
 def get_top_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP_LENGTH):
     tool_pose = pose_from_tform(PR2_TOOL_TFORM)
+    #tool_pose = Pose()
 
     aabb = get_model_visual_aabb(tree, tree.doKinematics(Conf(tree)), model_id)
     w, l, h = 2*get_aabb_extent(aabb)
@@ -586,12 +586,49 @@ def get_top_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP
             grasps += [multiply_poses(tool_pose, translate, rotate_z, reflect_z)]
     return grasps
 
+def get_side_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP_LENGTH):
+  tool_pose = pose_from_tform(PR2_TOOL_TFORM)
+  aabb = get_model_visual_aabb(tree, tree.doKinematics(Conf(tree)), model_id)
+  w, l, h = 2*get_aabb_extent(aabb)
+  grasps = []
+  for j in range(1 + under):
+    swap_xz = Pose(euler=Euler(pitch=(-np.pi/2 + j*np.pi)))
+    if not limits or (w <= MAX_GRASP_WIDTH):
+      translate = Pose(point=Point(z=(l / 2 - grasp_length)))
+      for i in range(2):
+        rotate_z = Pose(euler=Euler(roll=(np.pi / 2 + i * np.pi)))
+        grasps += [multiply_poses(tool_pose, translate, rotate_z, swap_xz)]
+    if not limits or (l <= MAX_GRASP_WIDTH):
+      translate = Pose(point=Point(z=(w / 2 - grasp_length)))
+      for i in range(2):
+        rotate_z = Pose(euler=Euler(roll=(i * np.pi)))
+        grasps += [multiply_poses(tool_pose, translate, rotate_z, swap_xz)]
+  return grasps
+
+def get_x_presses(body, max_orientations=1): # g_f_o
+  pose = get_pose(body)
+  set_pose(body, unit_pose())
+  center, (w, l, h) = get_center_extent(body)
+  press_poses = []
+  for j in xrange(max_orientations):
+      swap_xz = (unit_point(), quat_from_euler([0, -np.pi/2 + j*np.pi, 0]))
+      translate = ([0, 0, w / 2], unit_quat())
+      press_poses += [multiply(TOOL_POSE, translate, swap_xz)]
+  set_pose(body, pose)
+  return press_poses
+
 
 def object_from_gripper(gripper_pose, grasp_pose):
     return multiply_poses(gripper_pose, grasp_pose)
 
 def gripper_from_object(object_pose, grasp_pose):
     return multiply_poses(object_pose, invert_pose(grasp_pose))
+
+def open_pr2_gripper(tree, q, model_id, gripper_name):
+    set_max_positions(tree, q, get_position_ids(tree, PR2_GROUPS[gripper_name], model_id))
+
+def close_pr2_gripper(tree, q, model_id, gripper_name):
+    set_min_positions(tree, q, get_position_ids(tree, PR2_GROUPS[gripper_name], model_id))
 
 ##################################################
 
@@ -756,14 +793,17 @@ def main():
     print(table1, is_fixed_base(tree, table1))
     print(block1, is_fixed_base(tree, block1))
 
-    grasp = get_top_grasps(tree, block1)[0]
+    grasps = get_top_grasps(tree, block1)
+    #grasps = get_side_grasps(tree, block1)
+
     #gripper_id = get_frame_from_name(tree, PR2_TOOL_FRAMES['left_gripper'], pr2).get_frame_index()
     gripper_id = get_body_from_name(tree, PR2_TOOL_FRAMES['left_gripper'], pr2).get_body_index()
-
     gripper_pose = get_world_pose(tree, tree.doKinematics(q), gripper_id)
-    print(gripper_pose)
-    set_pose(tree, q, block1, object_from_gripper(gripper_pose, grasp))
-    vis_helper.draw(q)
+
+    for grasp in grasps:
+        set_pose(tree, q, block1, object_from_gripper(gripper_pose, grasp))
+        vis_helper.draw(q)
+        raw_input('Continue?')
     return
 
 
