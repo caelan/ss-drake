@@ -28,7 +28,9 @@ PR2_TOOL_FRAMES = {
 
 TRANSLATION_LIMITS = (-10, 10)
 
-PR2_REVOLUTE = ['theta', 'r_forearm_roll_joint', 'r_wrist_roll_joint', 'l_forearm_roll_joint', 'l_wrist_roll_joint'] # TODO: obtain from joint info
+PR2_REVOLUTE = ['theta',
+                'r_forearm_roll_joint', 'r_wrist_roll_joint',
+                'l_forearm_roll_joint', 'l_wrist_roll_joint'] # TODO: obtain from joint info
 PR2_LIMITS = {
     'x': TRANSLATION_LIMITS,
     'y': TRANSLATION_LIMITS,
@@ -41,6 +43,7 @@ PR2_TOOL_TFORM = np.array([[0., 0., 1., 0.18],
                            [-1., 0., 0., 0.],
                            [0., 0., 0., 1.]])
 PR2_TOOL_DIRECTION = np.array([0., 0., 1.])
+
 TOP_HOLDING_LEFT_ARM = [0.67717021, -0.34313199, 1.2, -1.46688405, 1.24223229, -1.95442826, 2.22254125]
 SIDE_HOLDING_LEFT_ARM = [0.39277395, 0.33330058, 0., -1.52238431, 2.72170996, -1.21946936, -2.98914779]
 REST_LEFT_ARM = [2.13539289, 1.29629967, 3.74999698, -0.15000005, 10000., -0.10000004, 10000.]
@@ -55,7 +58,6 @@ def rightarm_from_leftarm(config):
 
 GRASP_LENGTH = 0.04 # 0
 MAX_GRASP_WIDTH = 0.07
-
 
 def get_top_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP_LENGTH):
     tool_pose = pose_from_tform(PR2_TOOL_TFORM)
@@ -79,23 +81,23 @@ def get_top_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP
 
 
 def get_side_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP_LENGTH):
-  tool_pose = pose_from_tform(PR2_TOOL_TFORM)
-  aabb = get_model_visual_aabb(tree, tree.doKinematics(Conf(tree)), model_id)
-  w, l, h = 2*get_aabb_extent(aabb)
-  grasps = []
-  for j in range(1 + under):
-    swap_xz = Pose(euler=Euler(pitch=(-np.pi/2 + j*np.pi)))
-    if not limits or (w <= MAX_GRASP_WIDTH):
-      translate = Pose(point=Point(z=(l / 2 - grasp_length)))
-      for i in range(2):
-        rotate_z = Pose(euler=Euler(roll=(np.pi / 2 + i * np.pi)))
-        grasps += [multiply_poses(tool_pose, translate, rotate_z, swap_xz)]
-    if not limits or (l <= MAX_GRASP_WIDTH):
-      translate = Pose(point=Point(z=(w / 2 - grasp_length)))
-      for i in range(2):
-        rotate_z = Pose(euler=Euler(roll=(i * np.pi)))
-        grasps += [multiply_poses(tool_pose, translate, rotate_z, swap_xz)]
-  return grasps
+    tool_pose = pose_from_tform(PR2_TOOL_TFORM)
+    aabb = get_model_visual_aabb(tree, tree.doKinematics(Conf(tree)), model_id)
+    w, l, h = 2 * get_aabb_extent(aabb)
+    grasps = []
+    for j in range(1 + under):
+        swap_xz = Pose(euler=Euler(pitch=(-np.pi / 2 + j * np.pi)))
+        if not limits or (w <= MAX_GRASP_WIDTH):
+            translate = Pose(point=Point(z=(l / 2 - grasp_length)))
+            for i in range(2):
+                rotate_z = Pose(euler=Euler(roll=(np.pi / 2 + i * np.pi)))
+                grasps += [multiply_poses(tool_pose, translate, rotate_z, swap_xz)]
+        if not limits or (l <= MAX_GRASP_WIDTH):
+            translate = Pose(point=Point(z=(w / 2 - grasp_length)))
+            for i in range(2):
+                rotate_z = Pose(euler=Euler(roll=(i * np.pi)))
+                grasps += [multiply_poses(tool_pose, translate, rotate_z, swap_xz)]
+    return grasps
 
 
 # def get_x_presses(body, max_orientations=1): # g_f_o
