@@ -7,7 +7,7 @@ from utils import get_drake_file, get_enabled_collision_filter, \
     get_disabled_collision_filter, add_model,get_position_name, DrakeVisualizerHelper, Conf, \
     get_position_ids, get_position_limits, plan_motion
 from pr2_utils import PR2_URDF, TABLE_SDF, PR2_GROUPS, PR2_LIMITS, REST_LEFT_ARM, \
-    rightarm_from_leftarm, open_pr2_gripper
+    rightarm_from_leftarm, open_pr2_gripper, get_pr2_limits
 
 from pydrake.multibody.rigid_body_tree import RigidBodyTree, AddFlatTerrainToWorld
 
@@ -35,15 +35,11 @@ def main():
     open_pr2_gripper(tree, q, pr2, 'left_gripper')
     open_pr2_gripper(tree, q, pr2, 'right_gripper')
 
-    custom_limits = [PR2_LIMITS.get(get_position_name(tree, position_id),
-                                      get_position_limits(tree, position_id))
-                       for position_id in range(tree.get_num_positions())]
-
     position_ids = get_position_ids(tree, PR2_GROUPS['base'], pr2)
     q[position_ids] = start_pose2d
     start_time = time.time()
     path = plan_motion(tree, q, position_ids, end_pose2d,
-                       position_limits=custom_limits,
+                       position_limits=get_pr2_limits(tree),
                        collision_filter=disabled_collision_filter)
 
     print(time.time()-start_time)

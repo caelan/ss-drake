@@ -3,7 +3,7 @@ from collections import namedtuple
 import numpy as np
 
 from utils import REVOLUTE_LIMITS, pose_from_tform, get_model_visual_aabb, Conf, get_aabb_extent, Pose, Euler, Point, \
-    multiply_poses, invert_pose, set_max_positions, get_position_ids, set_min_positions
+    multiply_poses, invert_pose, set_max_positions, get_position_ids, set_min_positions, get_position_name, get_position_limits
 
 PR2_URDF = "examples/pr2/models/pr2_description/urdf/pr2_simplified.urdf"
 TABLE_SDF = "examples/kuka_iiwa_arm/models/table/extra_heavy_duty_table_surface_only_collision.sdf"
@@ -54,6 +54,10 @@ CENTER_LEFT_ARM = [-0.07133691252641006, -0.052973836083405494, 1.57418057759190
 def rightarm_from_leftarm(config):
   right_from_left = np.array([-1, 1, -1, 1, -1, 1, 1])
   return config*right_from_left
+
+def get_pr2_limits(tree):
+    return [PR2_LIMITS.get(get_position_name(tree, position_id), get_position_limits(tree, position_id))
+                       for position_id in range(tree.get_num_positions())]
 
 
 GRASP_LENGTH = 0.04 # 0
@@ -112,12 +116,14 @@ def get_side_grasps(tree, model_id, under=False, limits=False, grasp_length=GRAS
 #   set_pose(body, pose)
 #   return press_poses
 
+APPROACH_DISTANCE = 0.1
 
-
-GraspInfo = namedtuple('GraspInfo', ['get_grasps', 'carry_values'])
+GraspInfo = namedtuple('GraspInfo', ['get_grasps', 'carry_values', 'approach_pose'])
 GRASP_NAMES = {
-    'top': GraspInfo(get_top_grasps, TOP_HOLDING_LEFT_ARM),
-    'side': GraspInfo(get_side_grasps, SIDE_HOLDING_LEFT_ARM),
+    'top': GraspInfo(get_top_grasps, TOP_HOLDING_LEFT_ARM,
+                     APPROACH_DISTANCE*Pose(Point(z=1))),
+    'side': GraspInfo(get_side_grasps, SIDE_HOLDING_LEFT_ARM,
+                      APPROACH_DISTANCE * Pose(Point(z=1))),
 }
 
 

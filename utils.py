@@ -594,9 +594,12 @@ def inverse_kinematics(tree, frame_id, pose, position_ids=None, q_seed=None, eps
     # TODO: can constraint Q weight by modifying the option
     # TODO: check that the solution is close enough here
 
-    [info] = results.info
-    success = (info < 10) # http://drake.mit.edu/doxygen_cxx/rigid__body__ik_8h_source.html
-    print('Success: {} | Info: {} | Infeasible: {}'.format(success, info, len(results.infeasible_constraints)))
-    if success:
-        return results.q_sol[0]
-    return None
+    [info] = results.info # http://drake.mit.edu/doxygen_cxx/rigid__body__ik_8h_source.html
+    if 10 <= info:
+        return None
+    #print('Success: {} | Info: {} | Infeasible: {}'.format(success, info, len(results.infeasible_constraints)))
+    q_solution = results.q_sol[0]
+    gripper_pose = get_world_pose(tree, tree.doKinematics(q_solution), frame_id)
+    if not np.allclose(gripper_pose, gripper_pose, atol=1e-4):
+        return None
+    return q_solution

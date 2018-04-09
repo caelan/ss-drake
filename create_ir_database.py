@@ -20,6 +20,9 @@ def read_pickle(filename):
 
 ##################################################
 
+def get_ir_filename(arm_name, grasp_name):
+    return IR_FILENAME.format(grasp_name, arm_name)
+
 def create_inverse_reachability(tree, robot_id, object_id, table_id, arm_name, grasp_name,
                                 default_q=None, check_collisions=True, num_samples=100):
     # TODO: maybe hash all the first arguments
@@ -72,7 +75,7 @@ def create_inverse_reachability(tree, robot_id, object_id, table_id, arm_name, g
         gripper_from_base_list.append(gripper_from_base)
         #raw_input('Continue?')
 
-    filename = IR_FILENAME.format(grasp_name, arm_name)
+    filename = get_ir_filename(arm_name, grasp_name)
     path = os.path.join(DATABASES_DIR, filename)
     data = {
         'filename': filename,
@@ -90,7 +93,7 @@ def create_inverse_reachability(tree, robot_id, object_id, table_id, arm_name, g
 ##################################################
 
 def load_inverse_reachability(arm_name, grasp_name):
-    filename = IR_FILENAME.format(arm_name, grasp_name)
+    filename = get_ir_filename(arm_name, grasp_name)
     path = os.path.join(DATABASES_DIR, filename)
     return read_pickle(path)['gripper_from_base']
 
