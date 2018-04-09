@@ -8,7 +8,7 @@ from utils import get_drake_file, get_enabled_collision_filter, \
     get_position_name, get_min_position, get_max_position, DrakeVisualizerHelper, Conf, get_position_ids, \
     set_max_positions, set_pose, sample_placement, \
     is_fixed_base, get_body_from_name, get_world_pose, get_pose, get_frame_from_name, inverse_kinematics, get_position_limits, plan_motion, are_colliding, \
-    other_collision_filter, set_random_positions, POSE_POSITIONS
+    other_collision_filter, set_random_positions, POSE_POSITIONS, dump_tree
 from pr2_utils import PR2_URDF, TABLE_SDF, BLOCK_URDF, PR2_GROUPS, PR2_TOOL_FRAMES, PR2_LIMITS, TOP_HOLDING_LEFT_ARM, \
     REST_LEFT_ARM, rightarm_from_leftarm, get_top_grasps, gripper_from_object
 
@@ -33,22 +33,7 @@ def main():
     block2 = add_model(tree, block_file, fixed_base=False)
     AddFlatTerrainToWorld(tree, box_size=10, box_depth=.1) # Adds visual & collision
 
-    print("Models:", get_num_models(tree))
-    for model_id in range(get_num_models(tree)):
-        print(model_id, get_model_name(tree, model_id))
-
-    print("Bodies:", tree.get_num_bodies())
-    print("Frames:", tree.get_num_frames())
-    for body in get_bodies(tree):
-        print(body.get_body_index(), body.get_name(), body.get_group_to_collision_ids_map().keys())
-
-    print("Positions:", tree.get_num_positions())
-    print("Velocities:", tree.get_num_velocities())
-    for position_id in range(tree.get_num_positions()):
-        print(position_id, get_position_name(tree, position_id),
-            get_min_position(tree, position_id), get_max_position(tree, position_id))
-
-    print("Actuators:", tree.get_num_actuators())
+    dump_tree(tree)
 
     vis_helper = DrakeVisualizerHelper(tree)
 

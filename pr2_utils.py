@@ -8,6 +8,18 @@ from utils import REVOLUTE_LIMITS, pose_from_tform, get_model_visual_aabb, Conf,
 PR2_URDF = "examples/pr2/models/pr2_description/urdf/pr2_simplified.urdf"
 TABLE_SDF = "examples/kuka_iiwa_arm/models/table/extra_heavy_duty_table_surface_only_collision.sdf"
 BLOCK_URDF = "examples/kuka_iiwa_arm/models/objects/block_for_pick_and_place_mid_size.urdf"
+
+ROBOT_TOY_URDER = "examples/kuka_iiwa_arm/models/objects/big_robot_toy.urdf"
+FOLDING_TABLE_URDF = "examples/kuka_iiwa_arm/models/objects/folding_table.urdf"
+ROUND_TABLE_URDF = "examples/kuka_iiwa_arm/models/objects/round_table.urdf"
+SIMPLE_CYLINDER_URDF = "examples/kuka_iiwa_arm/models/objects/simple_cylinder.urdf"
+SIMPLE_CUBOID_URDF = "examples/kuka_iiwa_arm/models/objects/simple_cuboid.urdf"
+YELLOW_POST_URDF = "examples/kuka_iiwa_arm/models/objects/yellow_post.urdf"
+
+BLACK_BOX_URDF = "examples/kuka_iiwa_arm/models/objects/black_box.urdf"
+SMALL_BLOCK_URDF = "examples/kuka_iiwa_arm/models/objects/block_for_pick_and_place.urdf"
+LARGE_BLOCK_URDF = "examples/kuka_iiwa_arm/models/objects/block_for_pick_and_place_large_size.urdf"
+
 PR2_GROUPS = {
     'base': ['x', 'y', 'theta'],
     'torso': ['torso_lift_joint'],

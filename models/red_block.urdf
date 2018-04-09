@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<robot name="red_block">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.122" />
+      <inertia ixx="0.000360" ixy="0" ixz="0" iyy="0.0000615" iyz="0"
+          izz="0.00036" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.165 0.055 0.180" />
+      </geometry>
+      <material name="red">
+        <color rgba="1.0 0.0 0.0 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.165 0.055 0.180" />
+      </geometry>
+    </collision>
+  </link>
+</robot>

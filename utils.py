@@ -113,6 +113,20 @@ def pose_from_pose2d(pose2d, default_pose=None):
 
 ##################################################
 
+def get_element_color(element):
+    return element.getMaterial()
+
+def set_element_color(element, color):
+    return element.setMaterial(color)
+
+def set_body_color(body, color):
+    for element in body.get_visual_elements():
+        set_element_color(element, color)
+
+# TODO: bind new methods for creating bodies
+
+##################################################
+
 # TODO: distinguish between joints and positions better
 
 def get_position_name(tree, position_id):
@@ -603,3 +617,23 @@ def inverse_kinematics(tree, frame_id, pose, position_ids=None, q_seed=None, eps
     if not np.allclose(gripper_pose, gripper_pose, atol=1e-4):
         return None
     return q_solution
+
+##################################################
+
+def dump_tree(tree):
+    print("Models:", get_num_models(tree))
+    for model_id in range(get_num_models(tree)):
+        print(model_id, get_model_name(tree, model_id))
+
+    print("Bodies:", tree.get_num_bodies())
+    print("Frames:", tree.get_num_frames())
+    for body in get_bodies(tree):
+        print(body.get_body_index(), body.get_name(), body.IsRigidlyFixedToWorld()) #body.get_group_to_collision_ids_map().keys())
+
+    print("Positions:", tree.get_num_positions())
+    print("Velocities:", tree.get_num_velocities())
+    for position_id in range(tree.get_num_positions()):
+        print(position_id, get_position_name(tree, position_id),
+            get_min_position(tree, position_id), get_max_position(tree, position_id))
+
+    print("Actuators:", tree.get_num_actuators())
