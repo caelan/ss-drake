@@ -14,8 +14,7 @@ Download the most recent drake precompiled binaries (http://drake.mit.edu/from_b
 ```
 wget https://drake-packages.csail.mit.edu/drake/nightly/drake-latest-mac.tar.gz
 tar -xvf drake-latest-mac.tar.gz
-cd drake
-export PYTHONPATH=${PWD}/lib/python2.7/site-packages:${PYTHONPATH}
+export PYTHONPATH=${PWD}/drake/lib/python2.7/site-packages:${PYTHONPATH}
 ```
 
 ### Ubuntu 
@@ -23,8 +22,7 @@ export PYTHONPATH=${PWD}/lib/python2.7/site-packages:${PYTHONPATH}
 ```
 wget https://drake-packages.csail.mit.edu/drake/nightly/drake-latest-xenial.tar.gz
 tar -xvf drake-latest-xenial.tar.gz
-cd drake
-export PYTHONPATH=${PWD}/lib/python2.7/site-packages:${PYTHONPATH}
+export PYTHONPATH=${PWD}/drake/lib/python2.7/site-packages:${PYTHONPATH}
 ```
 
 ## Drake Resources
