@@ -13,14 +13,10 @@ from create_ir_database import uniform_pose_generator, learned_pose_generator
 from pydrake.multibody.rigid_body_tree import RigidBodyTree, AddFlatTerrainToWorld
 
 def step_path(vis_helper, path):
-    for i, q in enumerate(path):
-        vis_helper.draw(q)
-        raw_input('{}) step?'.format(i))
+    return vis_helper.step_sequence(path)
 
-def execute_path(vis_helper, path, time_step=0.1):
-    for i, q in enumerate(path):
-        vis_helper.draw(q)
-        time.sleep(time_step)
+def execute_path(vis_helper, path, time_step=0.05):
+    return vis_helper.execute_sequence(path, time_step=time_step)
 
 def convert_path(q0, position_ids, position_path):
     if position_path is None:

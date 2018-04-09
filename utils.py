@@ -4,6 +4,7 @@ import os
 import re
 import numpy as np
 import pydrake
+import time
 
 from motion_planners.rrt_connect import birrt, direct_path
 from pydrake.lcm import DrakeLcm
@@ -346,6 +347,16 @@ class DrakeVisualizerHelper:
         context = self.visualizer.CreateDefaultContext()
         context.FixInputPort(0, BasicVector(self.x))
         self.visualizer.Publish(context)
+
+    def step_sequence(self, sequence):
+        for i, q in enumerate(sequence):
+            self.draw(q)
+            raw_input('{}) step?'.format(i))
+
+    def execute_sequence(self, sequence, time_step=0.05):
+        for i, q in enumerate(sequence):
+            self.draw(q)
+            time.sleep(time_step)
 
 #####################################
 

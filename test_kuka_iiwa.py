@@ -11,7 +11,7 @@ from pr2_utils import PR2_URDF, TABLE_SDF, PR2_GROUPS, PR2_LIMITS, REST_LEFT_ARM
     rightarm_from_leftarm, open_pr2_gripper, get_pr2_limits, BLOCK_URDF, gripper_from_object, object_from_gripper, \
     GraspInfo, get_top_grasps
 
-from test_pick import step_path
+from test_pick import step_path, execute_path, convert_path
 
 from pydrake.multibody.rigid_body_tree import RigidBodyTree, AddFlatTerrainToWorld
 
@@ -64,38 +64,32 @@ def sample_pick_path(tree, q_initial, robot_id, object_id, grasp_info):
     arm_ids = get_model_position_ids(tree, robot_id)
 
     object_pose = get_pose(tree, q_initial, object_id)
+    grasp_pose = random.choice(grasps)
+    gripper_pose = gripper_from_object(object_pose, grasp_pose)
 
-    while True:
-        grasp_pose = random.choice(grasps)
-        gripper_pose = gripper_from_object(object_pose, grasp_pose)
+    approach_pose = multiply_poses(grasp_info.approach_pose, gripper_pose)
+    q_approach = inverse_kinematics(tree, gripper_id, approach_pose,
+                                 position_ids=arm_ids, q_seed=q_initial)
+    if (q_approach is None) or are_colliding(tree, tree.doKinematics(q_approach)):
+        print('Failed approach inverse kinematics')
+        return None
+    #return [q_initial, q_approach]
+    
+    q_grasp = inverse_kinematics(tree, gripper_id, gripper_pose,
+                                 position_ids=arm_ids, q_seed=q_approach)
+    if (q_grasp is None) or are_colliding(tree, tree.doKinematics(q_grasp)):
+        print('Failed grasp inverse kinematics')
+        return None
+    #return [q_initial, q_approach, q_grasp]
 
-        approach_pose = multiply_poses(grasp_info.approach_pose, gripper_pose)
-        q_approach = inverse_kinematics(tree, gripper_id, approach_pose,
-                                     position_ids=arm_ids, q_seed=q_initial)
-        if (q_approach is None): # or are_colliding(tree, tree.doKinematics(q_approach)):
-            print('Failed approach inverse kinematics')
-            continue
-        yield [q_initial, q_approach]
-        continue
-
-        q_grasp = inverse_kinematics(tree, gripper_id, gripper_pose,
-                                     position_ids=arm_ids, q_seed=q_approach)
-        if (q_grasp is None) or are_colliding(tree, tree.doKinematics(q_grasp)):
-            print('Failed grasp inverse kinematics')
-            continue
-        yield [q_initial, q_carry, q_approach, q_grasp]
-        continue
-
-        approach_path = convert_path(base_path[-1], arm_ids, plan_motion(tree, q_carry, arm_ids, q_approach[arm_ids], 
-            collision_filter=collision_filter))
-        if approach_path is None:
-            continue
-        grasp_path = convert_path(approach_path[-1], arm_ids, plan_motion(tree, q_approach, arm_ids, q_grasp[arm_ids], 
-            collision_filter=collision_filter, linear_only=True))
-        if grasp_path is None:
-            continue
-        print(len(carry_path), len(base_path), len(approach_path), len(grasp_path))
-        yield (carry_path + base_path + approach_path + grasp_path) # TODO: set the pose based on holding
+    approach_path = convert_path(q_initial, arm_ids, plan_motion(tree, q_initial, arm_ids, q_approach[arm_ids]))
+    if approach_path is None:
+        return None
+    grasp_path = convert_path(approach_path[-1], arm_ids, plan_motion(tree, q_approach, arm_ids, q_grasp[arm_ids], linear_only=True))
+    if grasp_path is None:
+        return None
+    print(len(approach_path), len(grasp_path))
+    return (approach_path + grasp_path) # TODO: set the pose based on holding
 
 def test_grasps(tree, vis_helper, robot, block, grasp_info):
     q0 = Conf(tree)
@@ -122,11 +116,13 @@ def main(num_blocks=1):
     while True:
         q0 = sample_placements(tree, blocks, ground)
         vis_helper.draw(q0)
-        full_path = next(sample_pick_path(tree, q0, robot, block, grasp_info))
+        full_path = sample_pick_path(tree, q0, robot, block, grasp_info)
         if full_path is None:
             continue
         print(len(full_path))
-        step_path(vis_helper, full_path)
+        raw_input('Execute?')
+        execute_path(vis_helper, full_path)
+        #step_path(vis_helper, full_path)
 
 
 if __name__ == '__main__':
