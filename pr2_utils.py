@@ -64,7 +64,7 @@ CENTER_LEFT_ARM = [-0.07133691252641006, -0.052973836083405494, 1.57418057759190
 
 
 def rightarm_from_leftarm(config):
-  right_from_left = np.array([-1, 1, -1, 1, -1, 1, 1])
+  right_from_left = np.array([-1, 1, -1, 1, -1, 1, -1])
   return config*right_from_left
 
 def get_pr2_limits(tree):

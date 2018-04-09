@@ -208,7 +208,8 @@ def get_body(tree, body_id):
 def get_bodies(tree, model_id=-1):
     #if model_id != -1:
     #    return tree.FindModelInstanceBodies(model_id) # TODO: not sure this works...
-    bodies = [get_body(tree, body_id) for body_id in range(tree.get_num_bodies())]
+    # Indexing at 1 to exclude the world
+    bodies = [get_body(tree, body_id) for body_id in range(1, tree.get_num_bodies())]
     if model_id == -1:
         return bodies
     return filter(lambda b: b.get_model_instance_id() == model_id, bodies)
@@ -613,8 +614,10 @@ def inverse_kinematics(tree, frame_id, pose, position_ids=None, q_seed=None, eps
         return None
     #print('Success: {} | Info: {} | Infeasible: {}'.format(success, info, len(results.infeasible_constraints)))
     q_solution = results.q_sol[0]
-    gripper_pose = get_world_pose(tree, tree.doKinematics(q_solution), frame_id)
-    if not np.allclose(gripper_pose, gripper_pose, atol=1e-4):
+    frame_pose = get_world_pose(tree, tree.doKinematics(q_solution), frame_id)
+    #print(frame_pose - pose)
+    #print(np.isclose(frame_pose, pose, atol=1e-3, rtol=0))
+    if not np.allclose(frame_pose, pose, atol=1e-3, rtol=0):
         return None
     return q_solution
 
