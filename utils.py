@@ -135,12 +135,19 @@ def get_position_name(tree, position_id):
 def get_position_names(tree, position_ids):
     return [get_position_name(tree, position_id) for position_id in position_ids]
 
-def get_position_id(tree, position_name, model_id=-1):
+def get_body_position_ids(body):
+    return range(body.get_position_start_index(), body.get_position_start_index() + body.get_num_positions())
+
+def get_model_position_ids(tree, model_id=-1):
+    position_ids = []
     for body in get_bodies(tree, model_id):
-        for position_id in range(body.get_position_start_index(),
-                                 body.get_position_start_index() + body.get_num_positions()):
-            if get_position_name(tree, position_id) == position_name:
-                return position_id
+        position_ids += get_body_position_ids(body)
+    return position_ids
+
+def get_position_id(tree, position_name, model_id=-1):
+    for position_id in get_model_position_ids(tree, model_id):
+        if get_position_name(tree, position_id) == position_name:
+            return position_id
     raise ValueError(position_name)
 
 def get_position_ids(tree, position_names, model_id=-1):
@@ -557,7 +564,7 @@ def plan_motion(tree, initial_conf, position_ids, end_values, position_limits=No
 
 ##################################################
 
-def inverse_kinematics(tree, frame_id, pose, position_ids=None, q_seed=None, epsilon=0):
+def inverse_kinematics(tree, frame_id, pose, position_ids=None, q_seed=None, epsilon=0, tolerance=1e-3):
     if q_seed is None:
         q_seed = tree.getZeroConfiguration()
     if position_ids is None:
@@ -616,8 +623,8 @@ def inverse_kinematics(tree, frame_id, pose, position_ids=None, q_seed=None, eps
     q_solution = results.q_sol[0]
     frame_pose = get_world_pose(tree, tree.doKinematics(q_solution), frame_id)
     #print(frame_pose - pose)
-    #print(np.isclose(frame_pose, pose, atol=1e-3, rtol=0))
-    if not np.allclose(frame_pose, pose, atol=1e-3, rtol=0):
+    #print(np.isclose(frame_pose, pose, atol=tolerance, rtol=0))
+    if not np.allclose(frame_pose, pose, atol=tolerance, rtol=0):
         return None
     return q_solution
 

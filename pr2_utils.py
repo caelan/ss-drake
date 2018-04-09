@@ -2,7 +2,7 @@ from collections import namedtuple
 
 import numpy as np
 
-from utils import REVOLUTE_LIMITS, pose_from_tform, get_model_visual_aabb, Conf, get_aabb_extent, Pose, Euler, Point, \
+from utils import REVOLUTE_LIMITS, pose_from_tform, get_model_visual_aabb, Conf, get_aabb_center, get_aabb_extent, Pose, Euler, Point, \
     multiply_poses, invert_pose, set_max_positions, get_position_ids, set_min_positions, get_position_name, get_position_limits
 
 PR2_URDF = "examples/pr2/models/pr2_description/urdf/pr2_simplified.urdf"
@@ -54,6 +54,8 @@ PR2_TOOL_TFORM = np.array([[0., 0., 1., 0.18],
                            [0., 1., 0., 0.],
                            [-1., 0., 0., 0.],
                            [0., 0., 0., 1.]])
+#PR2_TOOL_TFORM = np.eye(4)
+
 PR2_TOOL_DIRECTION = np.array([0., 0., 1.])
 
 TOP_HOLDING_LEFT_ARM = [0.67717021, -0.34313199, 1.2, -1.46688405, 1.24223229, -1.95442826, 2.22254125]
@@ -73,23 +75,26 @@ def get_pr2_limits(tree):
 
 
 GRASP_LENGTH = 0.04 # 0
+#GRASP_LENGTH = 0.0
 MAX_GRASP_WIDTH = 0.07
 
-def get_top_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP_LENGTH):
-    tool_pose = pose_from_tform(PR2_TOOL_TFORM)
+def get_top_grasps(tree, model_id, under=False, max_width=MAX_GRASP_WIDTH, 
+        tool_tform=PR2_TOOL_TFORM, grasp_length=GRASP_LENGTH):
+    tool_pose = pose_from_tform(tool_tform)
     #tool_pose = Pose()
 
     aabb = get_model_visual_aabb(tree, tree.doKinematics(Conf(tree)), model_id)
     w, l, h = 2*get_aabb_extent(aabb)
     #print(get_aabb_center(aabb)) # TODO: incorporate
+    assert(np.allclose(get_aabb_center(aabb), np.zeros(3)))
     reflect_z = Pose(euler=Euler(pitch=np.pi))
     translate = Pose(point=Point(z=(h / 2 - grasp_length)))
     grasps = []
-    if not limits or (w <= MAX_GRASP_WIDTH):
+    if w <= max_width:
         for i in range(1 + under):
             rotate_z = Pose(euler=Euler(yaw=(np.pi / 2 + i * np.pi)))
             grasps += [multiply_poses(tool_pose, translate, rotate_z, reflect_z)]
-    if not limits or (l <= MAX_GRASP_WIDTH):
+    if l <= max_width:
         for i in range(1 + under):
             rotate_z = Pose(euler=Euler(yaw=(i*np.pi)))
             grasps += [multiply_poses(tool_pose, translate, rotate_z, reflect_z)]
