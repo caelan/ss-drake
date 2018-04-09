@@ -272,6 +272,10 @@ def set_min_positions(tree, q, position_ids):
     q[position_ids] = [get_min_position(tree, position_id) for position_id in position_ids]
     return q[position_ids]
 
+def set_center_positions(tree, q, position_ids):
+    q[position_ids] = [(get_min_position(tree, position_id) + get_max_position(tree, position_id))/2. for position_id in position_ids]
+    return q[position_ids]
+
 def set_max_positions(tree, q, position_ids):
     q[position_ids] = [get_max_position(tree, position_id) for position_id in position_ids]
     return q[position_ids]

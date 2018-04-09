@@ -6,45 +6,67 @@ from pr2_self_collision import PR2_COLLISION_PAIRS, INITIAL_COLLISION_PAIRS
 from utils import get_drake_file, get_enabled_collision_filter, \
     get_disabled_collision_filter, add_model,get_position_name, DrakeVisualizerHelper, Conf, \
     get_position_ids, get_position_limits, plan_motion, dump_tree, set_pose, sample_placement, are_colliding, get_body_from_name, \
-    get_model_position_ids, get_pose, multiply_poses, inverse_kinematics, get_world_pose, Pose, Point
+    get_model_position_ids, get_pose, multiply_poses, inverse_kinematics, get_world_pose, Pose, Point, set_min_positions, set_random_positions, \
+    set_max_positions, set_center_positions 
 from pr2_utils import PR2_URDF, TABLE_SDF, PR2_GROUPS, PR2_LIMITS, REST_LEFT_ARM, \
     rightarm_from_leftarm, open_pr2_gripper, get_pr2_limits, BLOCK_URDF, gripper_from_object, object_from_gripper, \
     GraspInfo, get_top_grasps
 
 from test_pick import step_path, execute_path, convert_path
-
 from pydrake.multibody.rigid_body_tree import RigidBodyTree, AddFlatTerrainToWorld
 
-# dual_iiwa14_primitive_cylinder_collision_only.urdf
-# dual_iiwa14_primitive_cylinder_visual_collision.urdf
-# dual_iiwa14_primitive_sphere_collision_only.urdf
-# dual_iiwa14_primitive_sphere_visual_collision.urdf
-# dual_iiwa14_visual_only.urdf
-
-#IIWA_URDF = "examples/kuka_iiwa_arm/dev/box_rotation/models/dual_iiwa14_primitive_sphere_visual_collision.urdf"
 IIWA_URDF = "manipulation/models/iiwa_description/urdf/iiwa14_polytope_collision.urdf"
 #IIWA_URDF = "manipulation/models/iiwa_description/urdf/iiwa14_spheres_collision.urdf"
 #IIWA_URDF = "manipulation/models/iiwa_description/urdf/iiwa14_primitive_collision.urdf"
+
 DUAL_IIWA_URDF = "manipulation/models/iiwa_description/urdf/dual_iiwa14_polytope_collision.urdf"
+#DUAL_IIWA_URDF = "examples/kuka_iiwa_arm/dev/box_rotation/models/dual_iiwa14_primitive_sphere_visual_collision.urdf"
+# dual_iiwa14_primitive_cylinder_collision_only.urdf
+# dual_iiwa14_primitive_cylinder_visual_collision.urdf
+# dual_iiwa14_primitive_sphere_collision_only.urdf
+# dual_iiwa14_visual_only.urdf
 
 VALKYRIE_URDF = "examples/valkyrie/urdf/urdf/valkyrie_A_sim_drake_one_neck_dof_wide_ankle_rom.urdf"
+
 ATLAS_URDF = "examples/atlas/urdf/atlas_minimal_contact.urdf"
 ATLAS_URDF = "examples/atlas/urdf/atlas_convex_hull.urdf"
-JACO_URDF = "manipulation/models/jaco_description/urdf/j2n6s300.urdf"
-WSG_50_URDF = "manipulation/models/jaco_description/urdf/wsg_50_mesh_collision.urdf"
 
-FLAT_TERRAIN_URDF = "models/flat_terrain.urdf"
-SHORT_FLOOR_URDF = "models/short_floor.urdf"
+JACO6_URDF = "manipulation/models/jaco_description/urdf/j2n6s300.urdf"
+#JACO6_URDF = "manipulation/models/jaco_description/urdf/j2n6s300_col.urdf"
+JACO7_URDF = "manipulation/models/jaco_description/urdf/j2s7s300.urdf"
 
+WSG50_URDF = "manipulation/models/wsg_50_description/urdf/wsg_50_mesh_collision.urdf" # Gripper
+
+#IRB140 = "examples/irb140/urdf/irb_140_robotiq_ati.urdf"
+#IRB140 = "examples/irb140/urdf/irb_140_convhull.urdf"
+#IRB140 = "examples/irb140/urdf/irb_140_robotiq_simple_ati.urdf"
+#IRB140 = "examples/irb140/urdf/irb_140_robotiq.urdf"
+IRB140 = "examples/irb140/urdf/irb_140.urdf"
 # https://github.com/RobotLocomotion/drake/tree/c84bceb37a9fa9b01f23413733446495bf843725/manipulation/models
 # https://github.com/caelan/drake/tree/master/examples/kuka_iiwa_arm/models/objects
 
+FLAT_TERRAIN_URDF = "models/flat_terrain.urdf"
+SHORT_FLOOR_URDF = "models/short_floor.urdf"
 
 KUKA_TOOL_FRAME = 'iiwa_link_ee_kuka' # iiwa_link_ee_kuka | iiwa_link_ee
 
 GRASP_NAMES = {
     'top': GraspInfo(lambda *args: get_top_grasps(*args, max_width=np.inf, tool_tform=np.eye(4), grasp_length=0), 
         None, 0.1*Pose(Point(z=1))),
+}
+
+KUKA_GROUPS = {
+    'arm': [],
+}
+
+JACO6_GROUPS = {
+    'arm': ['j2n6s300_joint_{}'.format(j) for j in range(1, 7)],
+    'gripper': ['j2n6s300_joint_finger_{}'.format(j) for j in range(1, 4)],
+}
+
+JACO7_GROUPS = {
+    'arm': ['j2s7s300_joint_{}'.format(j) for j in range(1, 8)],
+    'gripper': ['j2s7s300_joint_finger_{}'.format(j) for j in range(1, 4)],
 }
 
 def sample_placements(tree, object_ids, surface_id, q_default=None):
@@ -107,9 +129,19 @@ def main(num_blocks=1):
     blocks = [add_model(tree, get_drake_file(BLOCK_URDF), fixed_base=False) for _ in range(num_blocks)]
     dump_tree(tree)
     vis_helper = DrakeVisualizerHelper(tree)
+
+    #while True:
+    #    q = tree.getRandomConfiguration()
+    #    #q = Conf(tree)
+    #    #set_min_positions(tree, q, get_position_ids(tree, JACO6_GROUPS['gripper'], robot)) # Open
+    #    #set_max_positions(tree, q, get_position_ids(tree, JACO6_GROUPS['gripper'], robot)) # Closed
+    #    #set_random_positions(tree, q, get_position_ids(tree, JACO6_GROUPS['gripper'], robot))
+    #    vis_helper.draw(q)
+    #    raw_input('Next?')
+    #return
+
     block = blocks[0]
     grasp_info = GRASP_NAMES['top']
-
     #test_grasps(tree, vis_helper, robot, block, grasp_info)
     #return
 
