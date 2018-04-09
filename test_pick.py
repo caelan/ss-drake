@@ -22,13 +22,15 @@ def execute_path(vis_helper, path):
         vis_helper.draw(q)
         time.sleep(0.1)
 
-def convert_path(q0, position_ids, path):
-    for values in path:
+def convert_path(q0, position_ids, position_path):
+    full_path = []
+    for values in position_path:
         q = q0.copy()
         q[position_ids] = values
-        yield q
+        full_path.append(q)
+    return full_path
 
-def sample_base_pose(tree, q0, robot_id, object_id, arm_name, grasp_name):
+def sample_base_pose(tree, q_initial, robot_id, object_id, arm_name, grasp_name):
     grasp_info = GRASP_NAMES[grasp_name]
     grasps = grasp_info.get_grasps(tree, object_id)
     gripper_id = get_body_from_name(tree, PR2_TOOL_FRAMES['{}_gripper'.format(arm_name)],
@@ -36,38 +38,51 @@ def sample_base_pose(tree, q0, robot_id, object_id, arm_name, grasp_name):
     arm_ids = get_position_ids(tree, PR2_GROUPS['{}_arm'.format(arm_name)], robot_id)
     base_ids = get_position_ids(tree, PR2_GROUPS['base'], robot_id)
 
-    object_pose = get_pose(tree, q0, object_id)
+    object_pose = get_pose(tree, q_initial, object_id)
     collision_filter = other_collision_filter
+    limits = get_pr2_limits(tree)
     while True:
         grasp_pose = random.choice(grasps)
         gripper_pose = gripper_from_object(object_pose, grasp_pose)
-        approach_pose = multiply_poses(grasp_info.approach_pose, gripper_pose)
-
         base_generator = learned_pose_generator(gripper_pose, arm_name, grasp_name)
 
-        q_approach = q0.copy()
-        q_approach[arm_ids] = grasp_info.carry_values
-        base_pose2d = next(base_generator)
-        if base_pose2d is None:
+        q_carry = q_initial.copy()
+        q_carry[arm_ids] = grasp_info.carry_values
+        q_carry[base_ids] = next(base_generator)
+        if (q_carry[base_ids] is None) or are_colliding(tree, tree.doKinematics(q_carry), collision_filter=collision_filter):
             continue
-        q_approach[base_ids] = base_pose2d
-        if are_colliding(tree, tree.doKinematics(q_approach), collision_filter=collision_filter):
+
+        approach_pose = multiply_poses(grasp_info.approach_pose, gripper_pose)
+        q_approach = inverse_kinematics(tree, gripper_id, approach_pose,
+                                     position_ids=arm_ids, q_seed=q_carry)
+        if (q_approach is None) or are_colliding(tree, tree.doKinematics(q_approach), collision_filter=collision_filter):
             continue
+
         q_grasp = inverse_kinematics(tree, gripper_id, gripper_pose,
                                      position_ids=arm_ids, q_seed=q_approach)
-        if q_grasp is None:
+        if (q_grasp is None) or are_colliding(tree, tree.doKinematics(q_grasp), collision_filter=collision_filter):
             continue
-        if are_colliding(tree, tree.doKinematics(q_grasp), collision_filter=collision_filter):
-            continue
-        #base_path = []
-        base_path = plan_motion(tree, q0, base_ids, base_pose2d,
-                           position_limits=get_pr2_limits(tree), collision_filter=collision_filter)
+        #path = []
+        #carry_path = plan_motion(tree, q_initial, arm_ids, q_carry[arm_ids],
+        #                   position_limits=limits, collision_filter=collision_filter)
+        #if carry_path is None:
+        #    continue
+        base_path = plan_motion(tree, q_initial, base_ids, q_carry[base_ids],
+                                position_limits=limits, collision_filter=collision_filter)
         if base_path is None:
             continue
-        arm_path = plan_motion(tree, q_approach, arm_ids, q_grasp[arm_ids],
-                           position_limits=get_pr2_limits(tree), collision_filter=collision_filter)
-
-        yield base_path
+        approach_path = plan_motion(tree, q_carry, arm_ids, q_approach[arm_ids],
+                           position_limits=limits, collision_filter=collision_filter)
+        if approach_path is None:
+            continue
+        grasp_path = plan_motion(tree, q_approach, arm_ids, q_grasp[arm_ids],
+                           position_limits=limits, collision_filter=collision_filter, linear_only=True)
+        if grasp_path is None:
+            continue
+        print(len(base_path), len(approach_path), len(grasp_path))
+        yield convert_path(q_initial, base_ids, base_path) + \
+              convert_path(q_carry, arm_ids, approach_path) + \
+              convert_path(q_approach, arm_ids, grasp_path) # TODO: set the pose based on holding
 
 def main():
     pr2_file = get_drake_file(PR2_URDF)
