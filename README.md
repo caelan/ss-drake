@@ -18,6 +18,7 @@ wget https://drake-packages.csail.mit.edu/drake/nightly/drake-latest-mac.tar.gz
 tar -xvf drake-latest-mac.tar.gz
 export PYTHONPATH=${PWD}/drake/lib/python2.7/site-packages:${PYTHONPATH}
 ```
+Add ```export PYTHONPATH=...``` to your ```~/.bash_profile``` for frequent use.
 
 #### Ubuntu 
 
@@ -26,6 +27,7 @@ wget https://drake-packages.csail.mit.edu/drake/nightly/drake-latest-xenial.tar.
 tar -xvf drake-latest-xenial.tar.gz
 export PYTHONPATH=${PWD}/drake/lib/python2.7/site-packages:${PYTHONPATH}
 ```
+Add ```export PYTHONPATH=...``` to your ```~/.bashrc``` for frequent use.
 
 ### STRIPStream
 
