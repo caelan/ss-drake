@@ -3,11 +3,23 @@ from collections import namedtuple
 import numpy as np
 
 from utils import REVOLUTE_LIMITS, pose_from_tform, get_model_visual_aabb, Conf, get_aabb_extent, Pose, Euler, Point, \
-    multiply_poses, invert_pose, set_max_positions, get_position_ids, set_min_positions
+    multiply_poses, invert_pose, set_max_positions, get_position_ids, set_min_positions, get_position_name, get_position_limits
 
 PR2_URDF = "examples/pr2/models/pr2_description/urdf/pr2_simplified.urdf"
 TABLE_SDF = "examples/kuka_iiwa_arm/models/table/extra_heavy_duty_table_surface_only_collision.sdf"
 BLOCK_URDF = "examples/kuka_iiwa_arm/models/objects/block_for_pick_and_place_mid_size.urdf"
+
+ROBOT_TOY_URDER = "examples/kuka_iiwa_arm/models/objects/big_robot_toy.urdf"
+FOLDING_TABLE_URDF = "examples/kuka_iiwa_arm/models/objects/folding_table.urdf"
+ROUND_TABLE_URDF = "examples/kuka_iiwa_arm/models/objects/round_table.urdf"
+SIMPLE_CYLINDER_URDF = "examples/kuka_iiwa_arm/models/objects/simple_cylinder.urdf"
+SIMPLE_CUBOID_URDF = "examples/kuka_iiwa_arm/models/objects/simple_cuboid.urdf"
+YELLOW_POST_URDF = "examples/kuka_iiwa_arm/models/objects/yellow_post.urdf"
+
+BLACK_BOX_URDF = "examples/kuka_iiwa_arm/models/objects/black_box.urdf"
+SMALL_BLOCK_URDF = "examples/kuka_iiwa_arm/models/objects/block_for_pick_and_place.urdf"
+LARGE_BLOCK_URDF = "examples/kuka_iiwa_arm/models/objects/block_for_pick_and_place_large_size.urdf"
+
 PR2_GROUPS = {
     'base': ['x', 'y', 'theta'],
     'torso': ['torso_lift_joint'],
@@ -28,7 +40,9 @@ PR2_TOOL_FRAMES = {
 
 TRANSLATION_LIMITS = (-10, 10)
 
-PR2_REVOLUTE = ['theta', 'r_forearm_roll_joint', 'r_wrist_roll_joint', 'l_forearm_roll_joint', 'l_wrist_roll_joint'] # TODO: obtain from joint info
+PR2_REVOLUTE = ['theta',
+                'r_forearm_roll_joint', 'r_wrist_roll_joint',
+                'l_forearm_roll_joint', 'l_wrist_roll_joint'] # TODO: obtain from joint info
 PR2_LIMITS = {
     'x': TRANSLATION_LIMITS,
     'y': TRANSLATION_LIMITS,
@@ -41,6 +55,7 @@ PR2_TOOL_TFORM = np.array([[0., 0., 1., 0.18],
                            [-1., 0., 0., 0.],
                            [0., 0., 0., 1.]])
 PR2_TOOL_DIRECTION = np.array([0., 0., 1.])
+
 TOP_HOLDING_LEFT_ARM = [0.67717021, -0.34313199, 1.2, -1.46688405, 1.24223229, -1.95442826, 2.22254125]
 SIDE_HOLDING_LEFT_ARM = [0.39277395, 0.33330058, 0., -1.52238431, 2.72170996, -1.21946936, -2.98914779]
 REST_LEFT_ARM = [2.13539289, 1.29629967, 3.74999698, -0.15000005, 10000., -0.10000004, 10000.]
@@ -52,10 +67,13 @@ def rightarm_from_leftarm(config):
   right_from_left = np.array([-1, 1, -1, 1, -1, 1, 1])
   return config*right_from_left
 
+def get_pr2_limits(tree):
+    return [PR2_LIMITS.get(get_position_name(tree, position_id), get_position_limits(tree, position_id))
+                       for position_id in range(tree.get_num_positions())]
+
 
 GRASP_LENGTH = 0.04 # 0
 MAX_GRASP_WIDTH = 0.07
-
 
 def get_top_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP_LENGTH):
     tool_pose = pose_from_tform(PR2_TOOL_TFORM)
@@ -79,23 +97,23 @@ def get_top_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP
 
 
 def get_side_grasps(tree, model_id, under=False, limits=False, grasp_length=GRASP_LENGTH):
-  tool_pose = pose_from_tform(PR2_TOOL_TFORM)
-  aabb = get_model_visual_aabb(tree, tree.doKinematics(Conf(tree)), model_id)
-  w, l, h = 2*get_aabb_extent(aabb)
-  grasps = []
-  for j in range(1 + under):
-    swap_xz = Pose(euler=Euler(pitch=(-np.pi/2 + j*np.pi)))
-    if not limits or (w <= MAX_GRASP_WIDTH):
-      translate = Pose(point=Point(z=(l / 2 - grasp_length)))
-      for i in range(2):
-        rotate_z = Pose(euler=Euler(roll=(np.pi / 2 + i * np.pi)))
-        grasps += [multiply_poses(tool_pose, translate, rotate_z, swap_xz)]
-    if not limits or (l <= MAX_GRASP_WIDTH):
-      translate = Pose(point=Point(z=(w / 2 - grasp_length)))
-      for i in range(2):
-        rotate_z = Pose(euler=Euler(roll=(i * np.pi)))
-        grasps += [multiply_poses(tool_pose, translate, rotate_z, swap_xz)]
-  return grasps
+    tool_pose = pose_from_tform(PR2_TOOL_TFORM)
+    aabb = get_model_visual_aabb(tree, tree.doKinematics(Conf(tree)), model_id)
+    w, l, h = 2 * get_aabb_extent(aabb)
+    grasps = []
+    for j in range(1 + under):
+        swap_xz = Pose(euler=Euler(pitch=(-np.pi / 2 + j * np.pi)))
+        if not limits or (w <= MAX_GRASP_WIDTH):
+            translate = Pose(point=Point(z=(l / 2 - grasp_length)))
+            for i in range(2):
+                rotate_z = Pose(euler=Euler(roll=(np.pi / 2 + i * np.pi)))
+                grasps += [multiply_poses(tool_pose, translate, rotate_z, swap_xz)]
+        if not limits or (l <= MAX_GRASP_WIDTH):
+            translate = Pose(point=Point(z=(w / 2 - grasp_length)))
+            for i in range(2):
+                rotate_z = Pose(euler=Euler(roll=(i * np.pi)))
+                grasps += [multiply_poses(tool_pose, translate, rotate_z, swap_xz)]
+    return grasps
 
 
 # def get_x_presses(body, max_orientations=1): # g_f_o
@@ -110,12 +128,14 @@ def get_side_grasps(tree, model_id, under=False, limits=False, grasp_length=GRAS
 #   set_pose(body, pose)
 #   return press_poses
 
+APPROACH_DISTANCE = 0.1
 
-
-GraspInfo = namedtuple('GraspInfo', ['get_grasps', 'carry_values'])
+GraspInfo = namedtuple('GraspInfo', ['get_grasps', 'carry_values', 'approach_pose'])
 GRASP_NAMES = {
-    'top': GraspInfo(get_top_grasps, TOP_HOLDING_LEFT_ARM),
-    'side': GraspInfo(get_side_grasps, SIDE_HOLDING_LEFT_ARM),
+    'top': GraspInfo(get_top_grasps, TOP_HOLDING_LEFT_ARM,
+                     APPROACH_DISTANCE*Pose(Point(z=1))),
+    'side': GraspInfo(get_side_grasps, SIDE_HOLDING_LEFT_ARM,
+                      APPROACH_DISTANCE * Pose(Point(z=1))),
 }
 
 

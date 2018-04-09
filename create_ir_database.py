@@ -20,7 +20,11 @@ def read_pickle(filename):
 
 ##################################################
 
-def create_inverse_reachability(tree, robot_id, object_id, table_id, arm_name, grasp_name, default_q=None, num_samples=500):
+def get_ir_filename(arm_name, grasp_name):
+    return IR_FILENAME.format(grasp_name, arm_name)
+
+def create_inverse_reachability(tree, robot_id, object_id, table_id, arm_name, grasp_name,
+                                default_q=None, check_collisions=True, num_samples=100):
     # TODO: maybe hash all the first arguments
     assert(arm_name in ('left', 'right'))
     if default_q is None:
@@ -51,19 +55,19 @@ def create_inverse_reachability(tree, robot_id, object_id, table_id, arm_name, g
         if base_pose2d is None:
             continue
         q_approach[get_position_ids(tree, PR2_GROUPS['base'], robot_id)] = base_pose2d
-        #if are_colliding(tree, tree.doKinematics(q_approach), collision_filter=other_collision_filter):
-        #    continue
+        if check_collisions and are_colliding(tree, tree.doKinematics(q_approach), collision_filter=other_collision_filter):
+            continue
         vis_helper.draw(q_approach)
         q_grasp = inverse_kinematics(tree, gripper_id, target_gripper_pose, position_ids=position_ids, q_seed=q_approach)
         # TODO: confirm that is a solution here
-        if (q_grasp is None): # or pairwise_collision(robot, table):
+        if q_grasp is None:
             continue
         kin_cache = tree.doKinematics(q_grasp)
         gripper_pose = get_world_pose(tree, kin_cache, gripper_id)
         if not np.allclose(target_gripper_pose, gripper_pose, atol=1e-4):
             continue
-        #if are_colliding(tree, kin_cache, collision_filter=other_collision_filter):
-        #    continue
+        if check_collisions and are_colliding(tree, kin_cache, collision_filter=other_collision_filter):
+            continue
         vis_helper.draw(q_grasp)
         print(target_gripper_pose, gripper_pose)
         gripper_from_base = multiply_poses(invert_pose(gripper_pose), 
@@ -71,7 +75,7 @@ def create_inverse_reachability(tree, robot_id, object_id, table_id, arm_name, g
         gripper_from_base_list.append(gripper_from_base)
         #raw_input('Continue?')
 
-    filename = IR_FILENAME.format(grasp_name, arm_name)
+    filename = get_ir_filename(arm_name, grasp_name)
     path = os.path.join(DATABASES_DIR, filename)
     data = {
         'filename': filename,
@@ -85,6 +89,25 @@ def create_inverse_reachability(tree, robot_id, object_id, table_id, arm_name, g
     }
     write_pickle(path, data)
     return path
+
+##################################################
+
+def load_inverse_reachability(arm_name, grasp_name):
+    filename = get_ir_filename(arm_name, grasp_name)
+    path = os.path.join(DATABASES_DIR, filename)
+    return read_pickle(path)['gripper_from_base']
+
+def learned_pose_generator(gripper_pose, arm_name, grasp_name):
+    gripper_from_base_list = load_inverse_reachability(arm_name, grasp_name)
+    random.shuffle(gripper_from_base_list)
+    for gripper_from_base in gripper_from_base_list:
+        base_pose = multiply_poses(gripper_pose, gripper_from_base)
+        yield pose2d_from_pose(base_pose)
+
+def uniform_pose_generator(gripper_pose, **kwargs):
+    point = point_from_pose(gripper_pose)
+    while True:
+        yield sample_nearby_pose2d(point)
 
 ##################################################
 
@@ -113,8 +136,7 @@ def main():
     set_pose(tree, q, block1, sample_placement(tree, block1, table1))
     q = wrap_positions(tree, q, revolute_names=PR2_REVOLUTE)
 
-
-    create_inverse_reachability(tree, pr2, block1, table1, 'left', 'top', num_samples=5, default_q=q)
+    create_inverse_reachability(tree, pr2, block1, table1, 'left', 'top', num_samples=100, default_q=q)
     
 if __name__ == '__main__':
     main()
