@@ -34,7 +34,7 @@ Clone the following repositories and add them to your PYTHONPATH:
 1) https://github.com/caelan/motion-planners
 2) https://github.com/caelan/pddlstream
 
-## Examples
+## Tests
 
 1) Test pydrake - ```python -c 'import pydrake'```
 2) Test motion-planners - ```python -c 'import motion_planners'```
@@ -42,10 +42,16 @@ Clone the following repositories and add them to your PYTHONPATH:
 
 ## Examples
 
+Run ```drake/bin/drake-visualizer``` (in its own terminal) to display simulations.
+
+Examples without STRIPStream:
 1) Random table placements - ```python test_placements.py```
 2) PR2 base motion planning - ```python test_motion.py```
 3) Kuka pick & place - ```python test_pick.py```
 4) PR2 pick & place - ```python test_kuka_iiwa.py```
+
+Examples using STRIPStream:
+1) TBD
 
 ## Drake Resources
 
