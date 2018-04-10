@@ -57,7 +57,7 @@ Examples without STRIPStream:
 4) PR2 pick & place - ```python test_kuka_iiwa.py```
 
 Examples using STRIPStream:
-1) Kuka cooking - ``python test_ss_iiwa.py```
+1) Kuka cooking - ```python test_ss_iiwa.py```
 
 ## Drake Resources
 
