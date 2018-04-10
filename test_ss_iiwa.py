@@ -26,6 +26,8 @@ from ss.model.problem import Problem, get_length, get_cost
 from ss.model.operators import Action, Axiom
 from ss.model.streams import Stream, ListStream, GenStream, FnStream, TestStream
 from ss.model.plan import print_plan
+from collections import namedtuple
+
 
 SINK_URDF = 'models/sink.urdf'
 STOVE_URDF = 'models/sink.urdf'
@@ -90,23 +92,33 @@ class PartialConf(object):
     def __repr__(self):
         return 'q{}'.format(id(self) % 1000)
 
+HoldingInfo = namedtuple('HoldingInfo', ['body_id', 'grasp_pose', 'model_id'])
+
 class PartialPath(object):
-    # TODO: store transforms relative to part
-    def __init__(self, *args):
-        self.tree, self.positions, self.path = args
-    def partial_confs(self):
+    def __init__(self, tree, positions, sequence, holding=[]):
+        self.tree = tree
+        self.positions = positions
+        self.sequence = sequence
+        self.holding = holding
+    def partial_confs(self): # TODO: holding
         return [PartialConf(self.tree, self.positions, values) for values in self.path]
     def full_path(self, q0=None):
         if q0 is None:
             q0 = Conf(self.tree)
         new_path = []
-        for values in self.path:
+        for values in self.sequence:
             q = q0.copy()
             q[self.positions] = values
+            if self.holding:
+                kin_cache = self.tree.doKinematics(q)
+                for body_id, grasp_pose, model_id in self.holding:
+                    body_pose = get_world_pose(self.tree, kin_cache, body_id)
+                    model_pose = object_from_gripper(body_pose, grasp_pose)
+                    set_pose(self.tree, q, model_id, model_pose)
             new_path.append(q)
         return new_path
     def reverse(self):
-        return self.__class__(self.tree, self.positions, self.path)
+        return self.__class__(self.tree, self.positions, self.sequence[::-1], self.holding)
     def __repr__(self):
         return 't{}'.format(id(self) % 1000)
 
@@ -129,21 +141,6 @@ class Command(object):
     def __repr__(self):
         return 'c{}'.format(id(self) % 1000)
 
-def get_motion_gen(tree, robot, fixed_models=[], debug=True):
-    collision_models = [robot] + fixed_models
-    def fn(conf1, conf2):
-        if debug:
-            sequence = [conf1.values, conf2.values]
-        else:
-            q = Conf(tree)
-            conf1.assign(q)
-            sequence = plan_motion(tree, q, conf2.positions, conf2.values, model_ids=collision_models)
-            if sequence is None:
-                return None
-        path = PartialPath(tree, conf2.positions, sequence)
-        return [path]
-    return fn
-
 def get_grasp_gen(tree, grasp_name):
     grasp_info = GRASP_NAMES[grasp_name]
     def gen(model):
@@ -162,35 +159,55 @@ def get_stable_gen(tree):
             if pose is None:
                 continue
             model_conf = PartialConf(tree, model_positions, pose)
-            yield [model_conf]
+            yield (model_conf,)
             #q[model_positions] = values
             #set_pose(tree, q, model, pose)
             # TODO: check collisions
     return gen
 
-def get_ir_gen(tree, robot_id, debug=True):
+def get_ik_fn(tree, robot_id, fixed_ids=[], debug=True):
     q_default = Conf(tree)
     arm_ids = get_model_position_ids(tree, robot_id)
+    model_ids = ([robot_id] + fixed_ids)
     def fn(model, pose, grasp):
         gripper_id = get_body_from_name(tree, KUKA_TOOL_FRAME, robot_id).get_body_index()
         gripper_pose = gripper_from_object(pose.values, grasp.grasp_pose)
         approach_pose = multiply_poses(grasp.approach_pose, gripper_pose)
         q_approach = inverse_kinematics(tree, gripper_id, approach_pose, position_ids=arm_ids)
-        if (q_approach is None): # or are_colliding(tree, tree.doKinematics(q_approach)):
+        if (q_approach is None) or are_colliding(tree, tree.doKinematics(q_approach), model_ids=model_ids):
             return None
         conf = PartialConf(tree, arm_ids, q_approach[arm_ids])
-        q_grasp = inverse_kinematics(tree, gripper_id, gripper_pose,
-                                     position_ids=arm_ids, q_seed=q_approach)
-        if (q_grasp is None): # or are_colliding(tree, tree.doKinematics(q_grasp)):
+        q_grasp = inverse_kinematics(tree, gripper_id, gripper_pose, position_ids=arm_ids, q_seed=q_approach)
+        if (q_grasp is None) or are_colliding(tree, tree.doKinematics(q_grasp), model_ids=model_ids):
             return None
+        holding_info = HoldingInfo(gripper_id, grasp.grasp_pose, model)
         if debug:
-            sequence = [q_approach[arm_ids], q_grasp[arm_ids], q_approach[arm_ids]]
+            sequence = [q_approach[arm_ids], q_grasp[arm_ids]]
         else:
-            grasp_path = plan_motion(tree, q_approach, arm_ids, q_grasp[arm_ids], linear_only=True)
-            if grasp_path is None:
+            sequence = plan_motion(tree, q_approach, arm_ids, q_grasp[arm_ids], model_ids=model_ids, linear_only=True)
+            if sequence is None:
                 return None
-        path = PartialPath(tree, arm_ids, sequence)
-        return (conf, path)
+        command = Command([PartialPath(tree, arm_ids, sequence), 
+                        PartialPath(tree, arm_ids, sequence[::-1], holding=[holding_info])])
+        return (conf, command)
+        # TODO: holding collisions
+    return fn
+
+def get_motion_gen(tree, robot_id, fixed_ids=[], debug=True):
+    #arm_ids = get_model_position_ids(tree, robot_id)
+    model_ids = ([robot_id] + fixed_ids)
+    def fn(conf1, conf2):
+        assert(conf1.positions == conf2.positions)
+        if debug:
+            sequence = [conf1.values, conf2.values]
+        else:
+            q = Conf(tree)
+            conf1.assign(q)
+            sequence = plan_motion(tree, q, conf2.positions, conf2.values, model_ids=model_ids)
+            if sequence is None:
+                return None
+        command = Command([PartialPath(tree, conf2.positions, sequence)])
+        return (command,)
     return fn
 
 def ss_from_problem(tree, q0, robot_id, bound='unique', debug=False, movable_collisions=False, grasp_name='top'):
@@ -198,7 +215,9 @@ def ss_from_problem(tree, q0, robot_id, bound='unique', debug=False, movable_col
     models = range(get_num_models(tree))
     movable = filter(lambda m: (m != robot_id) and has_pose(tree, m), models)
     fixed_models = filter(lambda m: (m != robot_id) and not has_pose(tree, m), models)
-    print(movable)
+    print('Robot:', robot_id)
+    print('Movable:', movable)
+    print('Fixed:', fixed_models)
 
     robot_positions = get_model_position_ids(tree, robot_id)
     conf = PartialConf(tree, robot_positions, q0[robot_positions])
@@ -222,7 +241,9 @@ def ss_from_problem(tree, q0, robot_id, bound='unique', debug=False, movable_col
     #initial_atoms += [IsConnected(*pair) for pair in problem.buttons]
     #initial_atoms += [IsButton(body) for body, _ in problem.buttons]
 
-    goal_literals = []
+    goal_literals = [
+        AtConf(conf),
+    ]
     #if problem.goal_conf is not None:
     #    goal_conf = Pose(robot, problem.goal_conf)
     #    initial_atoms += [IsConf(goal_conf)]
@@ -257,15 +278,15 @@ def ss_from_problem(tree, q0, robot_id, bound='unique', debug=False, movable_col
                     CanMove(), AtConf(Q), ~Unsafe(T)],
                eff=[AtConf(Q2), ~CanMove(), ~AtConf(Q)]),
 
-            #Action(name='clean', param=[O, O2],  # Wirelessly communicates to clean
-            #      pre=[Stackable(O, O2), Washer(O2),
-            #           ~Cooked(O), On(O, O2)],
-            #      eff=[Cleaned(O)]),
-            #
-            #Action(name='cook', param=[O, O2],  # Wirelessly communicates to cook
-            #      pre=[Stackable(O, O2), Stove(O2),
-            #           Cleaned(O), On(O, O2)],
-            #      eff=[Cooked(O), ~Cleaned(O)]),
+        Action(name='clean', param=[O, O2],  # Wirelessly communicates to clean
+             pre=[Stackable(O, O2), Washer(O2),
+                  ~Cooked(O), On(O, O2)],
+             eff=[Cleaned(O)]),
+        
+        Action(name='cook', param=[O, O2],  # Wirelessly communicates to cook
+             pre=[Stackable(O, O2), Stove(O2),
+                  Cleaned(O), On(O, O2)],
+             eff=[Cooked(O), ~Cleaned(O)]),
     ]
 
     axioms = [
@@ -297,7 +318,7 @@ def ss_from_problem(tree, q0, robot_id, bound='unique', debug=False, movable_col
                graph=[IsPose(P), ValidPose(O, P), IsSupported(P, O2)], bound=bound),
 
         FnStream(name='ik', inp=[O, P, G], domain=[ValidPose(O, P), ValidGrasp(O, G)],
-                  fn=get_ir_gen(tree, robot_id, debug=debug), out=[Q, T],
+                  fn=get_ik_fn(tree, robot_id, fixed_ids=fixed_models, debug=debug), out=[Q, T],
                   graph=[IsKin(O, P, G, Q, T), IsConf(Q), IsTraj(T)], bound=bound),
 
         FnStream(name='motion', inp=[Q, Q2], domain=[IsConf(Q), IsConf(Q2)],
@@ -324,9 +345,7 @@ def main():
     vis_helper.draw(q0)
     assert(not are_colliding(tree, tree.doKinematics(q0)))
 
-    grasp_info = GRASP_NAMES['top']
-
-    ss_problem = ss_from_problem(tree, q0, robot, debug=True)
+    ss_problem = ss_from_problem(tree, q0, robot, debug=False)
     print(ss_problem)
     #ss_problem = ss_problem.debug_problem()
     #print(ss_problem)
@@ -337,21 +356,18 @@ def main():
     if plan is None:
         return
 
-    paths = []
+    commands = []
     for action, args in plan:
         command = args[-1]
         if action.name == 'place':
-            paths.append(command.reverse())
+            commands.append(command.reverse())
         else:
-            paths.append(command)
-    print(paths)
-    total_command = Command(paths)
-    print(total_command)
+            commands.append(command)
+    print(commands)
 
-    vis_helper.step_sequence(total_command.full_path(q0))
-    #execute_sequence()
-
-
+    full_path = Command(commands).full_path(q0)
+    vis_helper.execute_sequence(full_path)
+    vis_helper.step_sequence(full_path)
 
 
 if __name__ == '__main__':
