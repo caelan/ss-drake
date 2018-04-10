@@ -502,7 +502,17 @@ def sample_nearby_pose2d(target_point, radius_range=(0.25, 1.0)):
 #    return (bottom_z_max <= top_z_min <= (bottom_z_max + epsilon)) and \
 #           (aabb_contains(aabb2d_from_aabb(top_aabb), aabb2d_from_aabb(bottom_aabb)))
 
-def sample_placement(tree, object_id, surface_id, max_attempts=50, epsilon=1e-3):
+PLACEMENT_OFFSET = 1e-3
+
+def stable_z(tree, object_id, surface_id, q=None, epsilon=PLACEMENT_OFFSET):
+    if q is None:
+        q = Conf(tree)
+    kin_cache = tree.doKinematics(q)
+    object_aabb = get_model_visual_aabb(tree, kin_cache, object_id)
+    surface_aabb = get_model_visual_aabb(tree, kin_cache, surface_id)
+    return (get_aabb_max(surface_aabb) + get_aabb_extent(object_aabb))[2] + epsilon
+
+def sample_placement(tree, object_id, surface_id, max_attempts=50, epsilon=PLACEMENT_OFFSET):
     # TODO: could also just do with center of mass
     #com = tree.centerOfMass(tree.doKinematics(Conf()), object_id)
     for _ in xrange(max_attempts):

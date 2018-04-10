@@ -9,7 +9,7 @@ from utils import get_drake_file, get_enabled_collision_filter, \
     get_disabled_collision_filter, add_model,get_position_name, DrakeVisualizerHelper, Conf, \
     get_position_ids, get_position_limits, plan_motion, dump_tree, set_pose, sample_placement, are_colliding, get_body_from_name, \
     get_model_position_ids, get_pose, multiply_poses, inverse_kinematics, get_world_pose, Pose, Point, set_min_positions, set_random_positions, \
-    set_max_positions, set_center_positions, get_num_models, is_fixed_model, has_pose, POSE_POSITIONS
+    set_max_positions, set_center_positions, get_num_models, is_fixed_model, has_pose, POSE_POSITIONS, stable_z
 from pr2_utils import PR2_URDF, TABLE_SDF, PR2_GROUPS, PR2_LIMITS, REST_LEFT_ARM, \
     rightarm_from_leftarm, open_pr2_gripper, get_pr2_limits, BLOCK_URDF, gripper_from_object, object_from_gripper, \
     GraspInfo, get_top_grasps
@@ -25,6 +25,7 @@ from ss.model.functions import Predicate, NonNegFunction, rename_functions, init
 from ss.model.problem import Problem, get_length, get_cost
 from ss.model.operators import Action, Axiom
 from ss.model.streams import Stream, ListStream, GenStream, FnStream, TestStream
+from ss.model.plan import print_plan
 
 SINK_URDF = 'models/sink.urdf'
 STOVE_URDF = 'models/sink.urdf'
@@ -71,6 +72,14 @@ Unsafe = Predicate([T])
 
 rename_functions(locals())
 
+class Grasp(object):
+    def __init__(self, model, grasp_pose, approach_pose):
+        self.model = model
+        self.grasp_pose = grasp_pose
+        self.approach_pose = approach_pose
+    def __repr__(self):
+        return 'g{}'.format(id(self) % 1000)
+
 class PartialConf(object):
     def __init__(self, tree, positions, values):
         self.tree = tree
@@ -85,35 +94,53 @@ class PartialPath(object):
     # TODO: store transforms relative to part
     def __init__(self, *args):
         self.tree, self.positions, self.path = args
+    def partial_confs(self):
+        return [PartialConf(self.tree, self.positions, values) for values in self.path]
+    def full_path(self, q0=None):
+        if q0 is None:
+            q0 = Conf(self.tree)
+        new_path = []
+        for values in self.path:
+            q = q0.copy()
+            q[self.positions] = values
+            new_path.append(q)
+        return new_path
     def reverse(self):
         return self.__class__(self.tree, self.positions, self.path)
     def __repr__(self):
         return 't{}'.format(id(self) % 1000)
 
-class Commands(object):
-    def __init__(self, paths):
-        self.paths = paths
+class Command(object):
+    def __init__(self, partial_paths):
+        self.partial_paths = partial_paths
+    def full_path(self, q0=None):
+        #new_path = []
+        #for partial_path in self.partial_paths:
+        #    new_path += partial_path.full_path(q0)
+        #    q0 = new_path[-1]
+        if q0 is None:
+            q0 = Conf(self.tree)
+        new_path = [q0]
+        for partial_path in self.partial_paths:
+            new_path += partial_path.full_path(new_path[-1])[1:]
+        return new_path
+    def reverse(self):
+        return self.__class__([partial_path.reverse() for partial_path in reversed(self.partial_paths)])
     def __repr__(self):
         return 'c{}'.format(id(self) % 1000)
 
-class Grasp(object):
-    def __init__(self, model, grasp_pose, approach_pose):
-        self.model = model
-        self.grasp_pose = grasp_pose
-        self.approach_pose = approach_pose
-    def __repr__(self):
-        return 'g{}'.format(id(self) % 1000)
-
-def get_motion_gen(tree, robot, fixed_models=[]):
+def get_motion_gen(tree, robot, fixed_models=[], debug=True):
     collision_models = [robot] + fixed_models
     def fn(conf1, conf2):
-        q = Conf(tree)
-        conf1.assign(q)
-        sequence = [conf1.values, conf2.values]
-        #sequence = plan_motion(tree, q, conf2.positions, conf2.values, model_ids=collision_models)
-        #if sequence is None:
-        #    return None
-        path = PartialPath(tree, conf2.positions, conf2.values)
+        if debug:
+            sequence = [conf1.values, conf2.values]
+        else:
+            q = Conf(tree)
+            conf1.assign(q)
+            sequence = plan_motion(tree, q, conf2.positions, conf2.values, model_ids=collision_models)
+            if sequence is None:
+                return None
+        path = PartialPath(tree, conf2.positions, sequence)
         return [path]
     return fn
 
@@ -141,7 +168,7 @@ def get_stable_gen(tree):
             # TODO: check collisions
     return gen
 
-def get_ir_gen(tree, robot_id):
+def get_ir_gen(tree, robot_id, debug=True):
     q_default = Conf(tree)
     arm_ids = get_model_position_ids(tree, robot_id)
     def fn(model, pose, grasp):
@@ -156,17 +183,17 @@ def get_ir_gen(tree, robot_id):
                                      position_ids=arm_ids, q_seed=q_approach)
         if (q_grasp is None): # or are_colliding(tree, tree.doKinematics(q_grasp)):
             return None
-        path = PartialPath(tree, arm_ids, [q_approach[arm_ids], q_grasp[arm_ids]])
-        return (conf, path)
-
-
-        grasp_path = plan_motion(tree, q_approach, arm_ids, q_grasp[arm_ids], linear_only=True)
-        if grasp_path is None:
-            return None
+        if debug:
+            sequence = [q_approach[arm_ids], q_grasp[arm_ids], q_approach[arm_ids]]
+        else:
+            grasp_path = plan_motion(tree, q_approach, arm_ids, q_grasp[arm_ids], linear_only=True)
+            if grasp_path is None:
+                return None
+        path = PartialPath(tree, arm_ids, sequence)
         return (conf, path)
     return fn
 
-def ss_from_problem(tree, q0, robot_id, bound='shared', movable_collisions=False, grasp_name='top'):
+def ss_from_problem(tree, q0, robot_id, bound='unique', debug=False, movable_collisions=False, grasp_name='top'):
     #robot = problem.robot
     models = range(get_num_models(tree))
     movable = filter(lambda m: (m != robot_id) and has_pose(tree, m), models)
@@ -176,7 +203,7 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', movable_collisions=False
     robot_positions = get_model_position_ids(tree, robot_id)
     conf = PartialConf(tree, robot_positions, q0[robot_positions])
     initial_atoms = [
-        CanMove(),
+        HandEmpty(), CanMove(),
         IsConf(conf), AtConf(conf),
         initialize(TotalCost(), 0),
     ]
@@ -260,22 +287,22 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', movable_collisions=False
         ]
 
     streams = [
-        FnStream(name='motion', inp=[Q, Q2], domain=[IsConf(Q), IsConf(Q2)],
-                 fn=get_motion_gen(tree, robot_id), out=[T],
-                 graph=[IsMotion(Q, Q2, T), IsTraj(T)], bound=bound),
-
-        Stream(name='grasp', inp=[O], domain=[IsMovable(O)],
+        GenStream(name='grasp', inp=[O], domain=[IsMovable(O)],
                fn=get_grasp_gen(tree, grasp_name), out=[G],
                graph=[ValidGrasp(O, G), IsGrasp(G)], bound=bound),
 
         # TODO: test_support
-        Stream(name='support', inp=[O, O2], domain=[Stackable(O, O2)],
+        GenStream(name='support', inp=[O, O2], domain=[Stackable(O, O2)],
                fn=get_stable_gen(tree), out=[P],
                graph=[IsPose(P), ValidPose(O, P), IsSupported(P, O2)], bound=bound),
 
         FnStream(name='ik', inp=[O, P, G], domain=[ValidPose(O, P), ValidGrasp(O, G)],
-                  fn=get_ir_gen(tree, robot_id), out=[Q, T],
+                  fn=get_ir_gen(tree, robot_id, debug=debug), out=[Q, T],
                   graph=[IsKin(O, P, G, Q, T), IsConf(Q), IsTraj(T)], bound=bound),
+
+        FnStream(name='motion', inp=[Q, Q2], domain=[IsConf(Q), IsConf(Q2)],
+                 fn=get_motion_gen(tree, robot_id, debug=debug), out=[T],
+                 graph=[IsMotion(Q, Q2, T), IsTraj(T)], bound=bound),
     ]
 
     return Problem(initial_atoms, goal_literals, actions, axioms, streams,
@@ -293,17 +320,37 @@ def main():
     vis_helper = DrakeVisualizerHelper(tree)
 
     q0 = Conf(tree)
-    set_pose(tree, q0, block, Pose(Point(y=0.5, z=0.09)))
+    set_pose(tree, q0, block, Pose(Point(y=0.5, z=stable_z(tree, block, ground))))
     vis_helper.draw(q0)
+    assert(not are_colliding(tree, tree.doKinematics(q0)))
 
     grasp_info = GRASP_NAMES['top']
 
-    ss_problem = ss_from_problem(tree, q0, robot)
+    ss_problem = ss_from_problem(tree, q0, robot, debug=True)
     print(ss_problem)
+    #ss_problem = ss_problem.debug_problem()
+    #print(ss_problem)
 
-    plan, evaluations = dual_focused(ss_problem)
+    plan, evaluations = dual_focused(ss_problem, verbose=True)
     #plan, evaluations = incremental(ss_problem, verbose=True)
-    print(plan)
+    print_plan(plan, evaluations)
+    if plan is None:
+        return
+
+    paths = []
+    for action, args in plan:
+        command = args[-1]
+        if action.name == 'place':
+            paths.append(command.reverse())
+        else:
+            paths.append(command)
+    print(paths)
+    total_command = Command(paths)
+    print(total_command)
+
+    vis_helper.step_sequence(total_command.full_path(q0))
+    #execute_sequence()
+
 
 
 
