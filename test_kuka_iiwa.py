@@ -51,7 +51,7 @@ SHORT_FLOOR_URDF = "models/short_floor.urdf"
 KUKA_TOOL_FRAME = 'iiwa_link_ee_kuka' # iiwa_link_ee_kuka | iiwa_link_ee
 
 GRASP_NAMES = {
-    'top': GraspInfo(lambda *args: get_top_grasps(*args, max_width=np.inf, tool_tform=np.eye(4), grasp_length=0), 
+    'top': GraspInfo(lambda *args: get_top_grasps(*args, under=True, max_width=np.inf, tool_tform=np.eye(4), grasp_length=0), 
         None, 0.1*Pose(Point(z=1))),
 }
 

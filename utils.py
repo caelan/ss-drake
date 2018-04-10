@@ -145,6 +145,9 @@ def get_model_position_ids(tree, model_id=-1):
         position_ids += get_body_position_ids(body)
     return position_ids
 
+def get_model_joint_ids(tree, model_id=-1):
+    return filter(lambda i: get_position_name(tree, i) not in POSE_POSITIONS, get_model_position_ids(tree, model_id))
+
 def get_position_id(tree, position_name, model_id=-1):
     for position_id in get_model_position_ids(tree, model_id):
         if get_position_name(tree, position_id) == position_name:
@@ -153,6 +156,15 @@ def get_position_id(tree, position_name, model_id=-1):
 
 def get_position_ids(tree, position_names, model_id=-1):
     return [get_position_id(tree, position_name, model_id) for position_name in position_names]
+
+def get_position_body(tree, position_id):
+    for body in get_bodies(tree):
+        if position_id in get_body_position_ids(body):
+            return body
+    raise ValueError(position_id)
+
+def get_position_bodies(tree, position_ids):
+    return [get_position_body(tree, position_id) for position_id in position_ids]
 
 #def get_num_joints(tree):
 #    return tree.get_num_positions() # number_of_positions
@@ -242,6 +254,12 @@ def get_model_name(tree, model_id):
 
 def is_fixed_model(tree, model_id):
     return get_base_body(tree, model_id).IsRigidlyFixedToWorld()
+
+def is_connected_model(tree, model_id):
+    return len(get_base_bodies(tree, model_id)) <= 1
+
+def is_rigid_model(tree, model_id):
+    return not get_model_position_ids(tree, model_id)
 
 ##################################################
 
@@ -392,9 +410,8 @@ def get_aabb_extent(aabb):
 def aabb_union(aabbs):
     return aabb_from_points(np.hstack(aabbs))
 
-#def aabb2d_from_aabb(aabb):
-#    lower, upper = aabb
-#    return lower[:2], upper[:2]
+def aabb2d_from_aabb(aabb):
+    return aabb[:2,:]
 
 def aabb_contains(container, contained):
     return np.all(get_aabb_min(container) <= get_aabb_min(contained)) and \
@@ -494,13 +511,12 @@ def sample_nearby_pose2d(target_point, radius_range=(0.25, 1.0)):
     yaw = np.random.uniform(*REVOLUTE_LIMITS)
     return Pose2d(x, y, yaw)
 
-#def supports_body(top_body, bottom_body, epsilon=1e-2): # TODO: above / below
-#    top_aabb = get_lower_upper(top_body)
-#    bottom_aabb = get_lower_upper(bottom_body)
-#    top_z_min = top_aabb[0][2]
-#    bottom_z_max = bottom_aabb[1][2]
-#    return (bottom_z_max <= top_z_min <= (bottom_z_max + epsilon)) and \
-#           (aabb_contains(aabb2d_from_aabb(top_aabb), aabb2d_from_aabb(bottom_aabb)))
+def is_placement(tree, kin_cache, object_id, surface_id, epsilon=1e-2): # TODO: above / below
+    object_aabb = get_model_visual_aabb(tree, kin_cache, object_id)
+    surface_aabb = get_model_visual_aabb(tree, kin_cache, surface_id)
+    surface_z_max = get_aabb_max(surface_aabb)[2]
+    return (surface_z_max <= get_aabb_min(object_aabb)[2] <= (surface_z_max + epsilon)) and \
+           (aabb_contains(aabb2d_from_aabb(surface_aabb), aabb2d_from_aabb(object_aabb)))
 
 PLACEMENT_OFFSET = 1e-3
 
@@ -535,19 +551,15 @@ def sample_placement(tree, object_id, surface_id, max_attempts=50, epsilon=PLACE
 
 ##################################################
 
-def plan_motion(tree, initial_conf, position_ids, end_values, position_limits=None,
-        collision_filter=all_collision_filter, model_ids=None, linear_only=False, **kwargs):
-    assert len(position_ids) == len(end_values)
-    if position_limits is None:
-        position_limits = zip(tree.joint_limit_min, tree.joint_limit_max)
-    assert(len(initial_conf) == len(position_limits))
-
-    def sample_fn():
+def get_sample_fn(position_ids, position_limits):
+    def fn():
         return np.array([np.random.uniform(*position_limits[position_id])
                          for position_id in position_ids])
         #return tree.getRandomConfiguration()[position_ids]
+    return fn
 
-    def difference_fn(q2, q1):
+def get_difference_fn(position_ids):
+    def fn(q2, q1):
         # TODO: revolute joints
         difference = []
         for joint, value2, value1 in zip(position_ids, q2, q1):
@@ -555,15 +567,23 @@ def plan_motion(tree, initial_conf, position_ids, end_values, position_limits=No
             #                  else circular_difference(value2, value1))
             difference.append(value2 - value1)
         return tuple(difference)
+    return fn
 
+def get_distance_fn(position_ids, weights=None):
+    if weights is None:
+        weights = 1*np.ones(len(position_ids))
     # TODO: custom weights and step sizes
-    weights = 1*np.ones(len(position_ids))
-    def distance_fn(q1, q2):
+    difference_fn = get_difference_fn(position_ids)
+    def fn(q1, q2):
         diff = np.array(difference_fn(q2, q1))
         return np.sqrt(np.dot(weights, diff * diff))
+    return fn
 
-    resolutions = 0.05*np.ones(len(position_ids))
-    def extend_fn(q1, q2):
+def get_extend_fn(position_ids, resolutions=None):
+    if resolutions is None:
+        resolutions = 0.05*np.ones(len(position_ids))
+    difference_fn = get_difference_fn(position_ids)
+    def fn(q1, q2):
         steps = np.abs(np.divide(difference_fn(q2, q1), resolutions))
         num_steps = int(np.max(steps)) + 1
         q = q1
@@ -571,6 +591,18 @@ def plan_motion(tree, initial_conf, position_ids, end_values, position_limits=No
             q = (1. / (num_steps - i)) * np.array(difference_fn(q2, q)) + q
             yield q
             # TODO: should wrap these joints
+    return fn
+
+def plan_motion(tree, initial_conf, position_ids, end_values, position_limits=None,
+        collision_filter=all_collision_filter, model_ids=None, linear_only=False, **kwargs):
+    assert(len(position_ids) == len(end_values))
+    if position_limits is None:
+        position_limits = zip(tree.joint_limit_min, tree.joint_limit_max)
+    assert(len(initial_conf) == len(position_limits))
+
+    sample_fn = get_sample_fn(position_ids, position_limits)
+    distance_fn = get_distance_fn(position_ids)
+    extend_fn = get_extend_fn(position_ids)
 
     def collision_fn(q):
         # Need to pass the pr2 in to this

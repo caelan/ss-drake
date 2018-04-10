@@ -9,7 +9,8 @@ from utils import get_drake_file, get_enabled_collision_filter, \
     get_disabled_collision_filter, add_model,get_position_name, DrakeVisualizerHelper, Conf, \
     get_position_ids, get_position_limits, plan_motion, dump_tree, set_pose, sample_placement, are_colliding, get_body_from_name, \
     get_model_position_ids, get_pose, multiply_poses, inverse_kinematics, get_world_pose, Pose, Point, set_min_positions, set_random_positions, \
-    set_max_positions, set_center_positions, get_num_models, is_fixed_model, has_pose, POSE_POSITIONS, stable_z
+    set_max_positions, set_center_positions, get_num_models, is_fixed_model, has_pose, POSE_POSITIONS, stable_z, \
+    is_placement, get_model_name, get_position_bodies
 from pr2_utils import PR2_URDF, TABLE_SDF, PR2_GROUPS, PR2_LIMITS, REST_LEFT_ARM, \
     rightarm_from_leftarm, open_pr2_gripper, get_pr2_limits, BLOCK_URDF, gripper_from_object, object_from_gripper, \
     GraspInfo, get_top_grasps
@@ -30,7 +31,7 @@ from collections import namedtuple
 
 
 SINK_URDF = 'models/sink.urdf'
-STOVE_URDF = 'models/sink.urdf'
+STOVE_URDF = 'models/stove.urdf'
 
 # TODO: stacking
 
@@ -44,7 +45,7 @@ IsMovable = Predicate([O])
 Stackable = Predicate([O, O2])
 Cleaned = Predicate([O])
 Cooked = Predicate([O])
-Washer = Predicate([O])
+Sink = Predicate([O])
 Stove = Predicate([O])
 
 IsPose = Predicate([P])
@@ -101,6 +102,11 @@ class PartialPath(object):
         self.positions = positions
         self.sequence = sequence
         self.holding = holding
+    def model_ids(self):
+        controlled_bodies = get_position_bodies(self.tree, self.positions)
+        actuated_ids = [body.get_model_instance_id() for body in controlled_bodies]
+        holding_ids = [info.model_id for info in self.holding]
+        return list(set(actuated_ids + holding_ids))
     def partial_confs(self): # TODO: holding
         return [PartialConf(self.tree, self.positions, values) for values in self.path]
     def full_path(self, q0=None):
@@ -110,7 +116,7 @@ class PartialPath(object):
         for values in self.sequence:
             q = q0.copy()
             q[self.positions] = values
-            if self.holding:
+            if self.holding: # TODO: cache this
                 kin_cache = self.tree.doKinematics(q)
                 for body_id, grasp_pose, model_id in self.holding:
                     body_pose = get_world_pose(self.tree, kin_cache, body_id)
@@ -166,7 +172,7 @@ def get_stable_gen(tree):
             # TODO: check collisions
     return gen
 
-def get_ik_fn(tree, robot_id, fixed_ids=[], debug=True):
+def get_ik_fn(tree, robot_id, fixed_ids=[], teleport=True):
     q_default = Conf(tree)
     arm_ids = get_model_position_ids(tree, robot_id)
     model_ids = ([robot_id] + fixed_ids)
@@ -182,11 +188,12 @@ def get_ik_fn(tree, robot_id, fixed_ids=[], debug=True):
         if (q_grasp is None) or are_colliding(tree, tree.doKinematics(q_grasp), model_ids=model_ids):
             return None
         holding_info = HoldingInfo(gripper_id, grasp.grasp_pose, model)
-        if debug:
+        if teleport:
             sequence = [q_approach[arm_ids], q_grasp[arm_ids]]
         else:
             sequence = plan_motion(tree, q_approach, arm_ids, q_grasp[arm_ids], model_ids=model_ids, linear_only=True)
             if sequence is None:
+                raw_input('Approach motion failed')
                 return None
         command = Command([PartialPath(tree, arm_ids, sequence), 
                         PartialPath(tree, arm_ids, sequence[::-1], holding=[holding_info])])
@@ -194,35 +201,37 @@ def get_ik_fn(tree, robot_id, fixed_ids=[], debug=True):
         # TODO: holding collisions
     return fn
 
-def get_motion_gen(tree, robot_id, fixed_ids=[], debug=True):
+def get_motion_gen(tree, robot_id, fixed_ids=[], teleport=True):
     model_ids = ([robot_id] + fixed_ids)
     def fn(conf1, conf2):
         assert(conf1.positions == conf2.positions)
-        if debug:
+        if teleport:
             sequence = [conf1.values, conf2.values]
         else:
             q = Conf(tree)
             conf1.assign(q)
             sequence = plan_motion(tree, q, conf2.positions, conf2.values, model_ids=model_ids)
             if sequence is None:
+                raw_input('Free motion failed')
                 return None
         command = Command([PartialPath(tree, conf2.positions, sequence)])
         return (command,)
     return fn
 
-def get_holding_motion_gen(tree, robot_id, fixed_ids=[], debug=True):
+def get_holding_motion_gen(tree, robot_id, fixed_ids=[], teleport=True):
     model_ids = ([robot_id] + fixed_ids)
     gripper_id = get_body_from_name(tree, KUKA_TOOL_FRAME, robot_id).get_body_index()
     def fn(conf1, conf2, model, grasp):
         assert(conf1.positions == conf2.positions)
         holding_info = HoldingInfo(gripper_id, grasp.grasp_pose, model)
-        if debug:
+        if teleport:
             sequence = [conf1.values, conf2.values]
         else:
             q = Conf(tree)
             conf1.assign(q)
             sequence = plan_motion(tree, q, conf2.positions, conf2.values, model_ids=model_ids)
             if sequence is None:
+                raw_input('Holding motion failed')
                 return None
         command = Command([PartialPath(tree, conf2.positions, sequence, holding=[holding_info])])
         return (command,)
@@ -234,15 +243,25 @@ def get_movable_collision_test(tree):
         for partial_path in command.partial_paths:
             if any(info.model_id == model for info in partial_path.holding):
                 continue # Cannot collide with itself
+            # TODO: cache the KinematicsCaches
+            q = Conf(tree)
+            pose.assign(q) # TODO: compute kinematics trees just for pairs/triplets of objects
+            model_ids = partial_path.model_ids() + [model]
+            for q in command.full_path(q):
+                if are_colliding(tree, tree.doKinematics(q), model_ids=model_ids):
+                    raw_input('Movable collision')
+                    return True
         return False
     return test
 
 
-def ss_from_problem(tree, q0, robot_id, bound='shared', debug=False, movable_collisions=False, grasp_name='top'):
-    #robot = problem.robot
-    models = range(get_num_models(tree))
-    movable = filter(lambda m: (m != robot_id) and has_pose(tree, m), models)
-    fixed_models = filter(lambda m: (m != robot_id) and not has_pose(tree, m), models)
+def ss_from_problem(tree, q0, robot_id, bound='shared', teleport=False, movable_collisions=False, grasp_name='top'):
+    kin_cache = tree.doKinematics(q0)
+    assert(not are_colliding(tree, kin_cache))
+
+    models = [m for m in range(get_num_models(tree)) if m != robot_id]
+    movable = filter(lambda m: has_pose(tree, m), models)
+    fixed_models = filter(lambda m: m not in movable, models)
     print('Robot:', robot_id)
     print('Movable:', movable)
     print('Fixed:', fixed_models)
@@ -259,33 +278,28 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', debug=False, movable_col
         pose = PartialConf(tree, model_positions, q0[model_positions])
         initial_atoms += [IsMovable(model), IsPose(pose),
                           ValidPose(model, pose), AtPose(model, pose)]
-        #for surface in problem.surfaces:
-        #    initial_atoms += [Stackable(body, surface)]
-        #    if supports_body(body, surface):
-        #        initial_atoms += [IsSupported(pose, surface)]
+        for surface in fixed_models:
+            initial_atoms += [Stackable(model, surface)]
+            if is_placement(tree, kin_cache, model, surface):
+                initial_atoms += [IsSupported(pose, surface)]
 
-    #initial_atoms += map(Washer, problem.sinks)
-    #initial_atoms += map(Stove, problem.stoves)
-    #initial_atoms += [IsConnected(*pair) for pair in problem.buttons]
-    #initial_atoms += [IsButton(body) for body, _ in problem.buttons]
+    for model in models:
+        name = get_model_name(tree, model)
+        if 'sink' in name:
+            initial_atoms.append(Sink(model))
+        if 'stove' in name:
+            initial_atoms.append(Stove(model))
 
+    model = movable[0]
     goal_literals = [
         AtConf(conf),
+        #Holding(model),
+        #On(model, fixed_models[0]),
+        #On(model, fixed_models[2]),
+        #Cleaned(model),
+        Cooked(model),
     ]
-    #if problem.goal_conf is not None:
-    #    goal_conf = Pose(robot, problem.goal_conf)
-    #    initial_atoms += [IsConf(goal_conf)]
-    #    goal_literals += [AtConf(goal_conf)]
-    #goal_literals += [Holding(*pair) for pair in problem.goal_holding]
-    goal_literals += [Holding(model) for model in movable]
-
-    #goal_literals += [On(*pair) for pair in problem.goal_on]
-    #goal_literals += map(Cleaned, problem.goal_cleaned)
-    #goal_literals += map(Cooked, problem.goal_cooked)
-
-    #GraspedCollision = Predicate([A, G, AT], domain=[IsArm(A), POSE(G), IsArmTraj(AT)],
-    #                             fn=lambda a, p, at: False, bound=False)
-
+ 
     PlacedCollision = Predicate([T, O, P], domain=[IsTraj(T), ValidPose(O, P)],
                                 fn=get_movable_collision_test(tree),
                                 bound=False)
@@ -313,7 +327,7 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', debug=False, movable_col
                eff=[AtConf(Q2), ~CanMove(), ~AtConf(Q)]),
 
         Action(name='clean', param=[O, O2],  # Wirelessly communicates to clean
-             pre=[Stackable(O, O2), Washer(O2),
+             pre=[Stackable(O, O2), Sink(O2),
                   ~Cooked(O), On(O, O2)],
              eff=[Cleaned(O)]),
         
@@ -335,8 +349,8 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', debug=False, movable_col
     ]
     if movable_collisions:
         axioms += [
-            Axiom(param=[O, P, T],
-                  pre=[ValidPose(O, P), PlacedCollision(T, P),
+            Axiom(param=[T, O, P],
+                  pre=[ValidPose(O, P), PlacedCollision(T, O, P),
                        AtPose(O, P)],
                   eff=Unsafe(T)),
         ]
@@ -352,15 +366,15 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', debug=False, movable_col
                graph=[IsPose(P), ValidPose(O, P), IsSupported(P, O2)], bound=bound),
 
         FnStream(name='ik', inp=[O, P, G], domain=[ValidPose(O, P), ValidGrasp(O, G)],
-                  fn=get_ik_fn(tree, robot_id, fixed_ids=fixed_models, debug=debug), out=[Q, T],
+                  fn=get_ik_fn(tree, robot_id, fixed_ids=fixed_models, teleport=teleport), out=[Q, T],
                   graph=[IsKin(O, P, G, Q, T), IsConf(Q), IsTraj(T)], bound=bound),
 
         FnStream(name='free_motion', inp=[Q, Q2], domain=[IsConf(Q), IsConf(Q2)],
-                 fn=get_motion_gen(tree, robot_id, debug=debug), out=[T],
+                 fn=get_motion_gen(tree, robot_id, teleport=teleport), out=[T],
                  graph=[IsMotion(Q, Q2, T), IsTraj(T)], bound=bound),
     
         FnStream(name='holding_motion', inp=[Q, Q2, O, G], domain=[IsConf(Q), IsConf(Q2), ValidGrasp(O, G)],
-             fn=get_holding_motion_gen(tree, robot_id, debug=debug), out=[T],
+             fn=get_holding_motion_gen(tree, robot_id, teleport=teleport), out=[T],
              graph=[IsHoldingMotion(Q, Q2, O, G, T), IsTraj(T)], bound=bound),
     ]
 
@@ -381,11 +395,10 @@ def main():
     q0 = Conf(tree)
     set_pose(tree, q0, block, Pose(Point(y=0.5, z=stable_z(tree, block, ground))))
     vis_helper.draw(q0)
-    assert(not are_colliding(tree, tree.doKinematics(q0)))
 
-    ss_problem = ss_from_problem(tree, q0, robot, debug=False)
+    ss_problem = ss_from_problem(tree, q0, robot, teleport=False, movable_collisions=True)
     print(ss_problem)
-    #ss_problem = ss_problem.debug_problem()
+    #ss_problem = ss_problem.teleport_problem()
     #print(ss_problem)
 
     plan, evaluations = dual_focused(ss_problem, verbose=True)
@@ -399,11 +412,12 @@ def main():
         command = args[-1]
         if action.name == 'place':
             commands.append(command.reverse())
-        else:
+        elif action.name in ['move_free', 'move_holding', 'pick']:
             commands.append(command)
     print(commands)
 
     full_path = Command(commands).full_path(q0)
+    raw_input('Execute?')
     vis_helper.execute_sequence(full_path)
     vis_helper.step_sequence(full_path)
 
