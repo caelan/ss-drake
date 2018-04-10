@@ -10,7 +10,7 @@ from utils import get_drake_file, get_enabled_collision_filter, \
     get_position_ids, get_position_limits, plan_motion, dump_tree, set_pose, sample_placement, are_colliding, get_body_from_name, \
     get_model_position_ids, get_pose, multiply_poses, inverse_kinematics, get_world_pose, Pose, Point, set_min_positions, set_random_positions, \
     set_max_positions, set_center_positions, get_num_models, is_fixed_model, has_pose, POSE_POSITIONS, stable_z, \
-    is_placement, get_model_name, get_position_bodies
+    is_placement, get_model_name, get_position_bodies, get_refine_fn
 from pr2_utils import PR2_URDF, TABLE_SDF, PR2_GROUPS, PR2_LIMITS, REST_LEFT_ARM, \
     rightarm_from_leftarm, open_pr2_gripper, get_pr2_limits, BLOCK_URDF, gripper_from_object, object_from_gripper, \
     GraspInfo, get_top_grasps
@@ -124,6 +124,12 @@ class PartialPath(object):
                     set_pose(self.tree, q, model_id, model_pose)
             new_path.append(q)
         return new_path
+    def refine(self, num_steps=0):
+        refine_fn = get_refine_fn(self.positions, num_steps)
+        new_sequence = []
+        for v1, v2 in zip(self.sequence, self.sequence[1:]):
+            new_sequence += list(refine_fn(v1, v2))
+        return self.__class__(self.tree, self.positions, new_sequence, self.holding)
     def reverse(self):
         return self.__class__(self.tree, self.positions, self.sequence[::-1], self.holding)
     def __repr__(self):
@@ -143,6 +149,8 @@ class Command(object):
         for partial_path in self.partial_paths:
             new_path += partial_path.full_path(new_path[-1])[1:]
         return new_path
+    def refine(self, num_steps=0):
+        return self.__class__([partial_path.refine(num_steps) for partial_path in self.partial_paths])
     def reverse(self):
         return self.__class__([partial_path.reverse() for partial_path in reversed(self.partial_paths)])
     def __repr__(self):
@@ -416,9 +424,9 @@ def main():
             commands.append(command)
     print(commands)
 
-    full_path = Command(commands).full_path(q0)
+    full_path = Command(commands).refine(num_steps=10).full_path(q0) # TODO: generator?
     raw_input('Execute?')
-    vis_helper.execute_sequence(full_path)
+    vis_helper.execute_sequence(full_path, time_step=0.005)
     vis_helper.step_sequence(full_path)
 
 

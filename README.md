@@ -4,6 +4,7 @@ STRIPStream + drake for python2.7
 
 <!--![PR2 Demo](images/pr2.png?raw=true "PR2 Demo")-->
 <img src="images/pr2.png" width="500">
+<img src="images/ss_kuka_iiwa.tiff" width="500">
 
 ## Installation
 

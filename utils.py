@@ -579,6 +579,17 @@ def get_distance_fn(position_ids, weights=None):
         return np.sqrt(np.dot(weights, diff * diff))
     return fn
 
+def get_refine_fn(position_ids, num_steps=0):
+    difference_fn = get_difference_fn(position_ids)
+    num_steps = num_steps + 1
+    def fn(q1, q2):
+        q = q1
+        for i in range(num_steps):
+            q = (1. / (num_steps - i)) * np.array(difference_fn(q2, q)) + q
+            yield q
+            # TODO: should wrap these joints
+    return fn
+
 def get_extend_fn(position_ids, resolutions=None):
     if resolutions is None:
         resolutions = 0.05*np.ones(len(position_ids))
@@ -586,11 +597,8 @@ def get_extend_fn(position_ids, resolutions=None):
     def fn(q1, q2):
         steps = np.abs(np.divide(difference_fn(q2, q1), resolutions))
         num_steps = int(np.max(steps)) + 1
-        q = q1
-        for i in range(num_steps):
-            q = (1. / (num_steps - i)) * np.array(difference_fn(q2, q)) + q
-            yield q
-            # TODO: should wrap these joints
+        refine_fn = get_refine_fn(position_ids, num_steps=int(np.max(steps)))
+        return refine_fn(q1, q2)
     return fn
 
 def plan_motion(tree, initial_conf, position_ids, end_values, position_limits=None,
