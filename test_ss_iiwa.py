@@ -87,18 +87,22 @@ class PartialPath(object):
         self.tree, self.positions, self.path = args
     def reverse(self):
         return self.__class__(self.tree, self.positions, self.path)
+    def __repr__(self):
+        return 't{}'.format(id(self) % 1000)
 
 class Commands(object):
     def __init__(self, paths):
         self.paths = paths
     def __repr__(self):
-        return 't{}'.format(id(self) % 1000)
+        return 'c{}'.format(id(self) % 1000)
 
 class Grasp(object):
     def __init__(self, model, grasp_pose, approach_pose):
         self.model = model
         self.grasp_pose = grasp_pose
         self.approach_pose = approach_pose
+    def __repr__(self):
+        return 'g{}'.format(id(self) % 1000)
 
 def get_motion_gen(tree, robot, fixed_models=[]):
     collision_models = [robot] + fixed_models
@@ -110,7 +114,7 @@ def get_motion_gen(tree, robot, fixed_models=[]):
         #if sequence is None:
         #    return None
         path = PartialPath(tree, conf2.positions, conf2.values)
-        return (path,)
+        return [path]
     return fn
 
 def get_grasp_gen(tree, grasp_name):
@@ -119,7 +123,7 @@ def get_grasp_gen(tree, grasp_name):
         grasp_poses = grasp_info.get_grasps(tree, model)
         for grasp_pose in grasp_poses:
             grasp = Grasp(model, grasp_pose, grasp_info.approach_pose)
-            yield (grasp,)
+            yield [grasp]
     return gen
 
 def get_stable_gen(tree):
@@ -130,7 +134,8 @@ def get_stable_gen(tree):
             pose = sample_placement(tree, model, surface)
             if pose is None:
                 continue
-            yield (PartialConf(tree, model_positions, pose))
+            model_conf = PartialConf(tree, model_positions, pose)
+            yield [model_conf]
             #q[model_positions] = values
             #set_pose(tree, q, model, pose)
             # TODO: check collisions
@@ -146,15 +151,18 @@ def get_ir_gen(tree, robot_id):
         q_approach = inverse_kinematics(tree, gripper_id, approach_pose, position_ids=arm_ids)
         if (q_approach is None): # or are_colliding(tree, tree.doKinematics(q_approach)):
             return None
+        conf = PartialConf(tree, arm_ids, q_approach[arm_ids])
         q_grasp = inverse_kinematics(tree, gripper_id, gripper_pose,
                                      position_ids=arm_ids, q_seed=q_approach)
         if (q_grasp is None): # or are_colliding(tree, tree.doKinematics(q_grasp)):
             return None
+        path = PartialPath(tree, arm_ids, [q_approach[arm_ids], q_grasp[arm_ids]])
+        return (conf, path)
+
+
         grasp_path = plan_motion(tree, q_approach, arm_ids, q_grasp[arm_ids], linear_only=True)
         if grasp_path is None:
             return None
-        conf = PartialConf(tree, arm_ids, q_approach[arm_ids])
-        path = PartialPath(tree, arm_ids, [q_approach[arm_ids], q_grasp[arm_ids]])
         return (conf, path)
     return fn
 
@@ -175,7 +183,8 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', movable_collisions=False
     for model in movable:
         model_positions = get_position_ids(tree, POSE_POSITIONS, model)
         pose = PartialConf(tree, model_positions, q0[model_positions])
-        initial_atoms += [IsMovable(model), IsPose(pose), ValidPose(model, pose), AtPose(model, pose)]
+        initial_atoms += [IsMovable(model), IsPose(pose),
+                          ValidPose(model, pose), AtPose(model, pose)]
         #for surface in problem.surfaces:
         #    initial_atoms += [Stackable(body, surface)]
         #    if supports_body(body, surface):
@@ -209,31 +218,28 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', movable_collisions=False
         Action(name='pick', param=[O, P, G, Q, T],
                pre=[IsKin(O, P, G, Q, T),
                     HandEmpty(), AtPose(O, P), AtConf(Q), ~Unsafe(T)],
-               eff=[HasGrasp(O, G), CanMove(), ~HandEmpty(), ~AtPose(O, P),
-                    Increase(TotalCost(), 1)]),
+               eff=[HasGrasp(O, G), CanMove(), ~HandEmpty(), ~AtPose(O, P)]),
 
         Action(name='place', param=[O, P, G, Q, T],
                pre=[IsKin(O, P, G, Q, T),
                     HasGrasp(O, G), AtConf(Q), ~Unsafe(T)],
-               eff=[HandEmpty(), CanMove(), AtPose(O, P), ~HasGrasp(O, G),
-                    Increase(TotalCost(), 1)]),
+               eff=[HandEmpty(), CanMove(), AtPose(O, P), ~HasGrasp(O, G)]),
 
         Action(name='move', param=[Q, Q2, T],
                pre=[IsMotion(Q, Q2, T),
                     CanMove(), AtConf(Q), ~Unsafe(T)],
-               eff=[AtConf(Q2), ~CanMove(), ~AtConf(Q),
-                    Increase(TotalCost(), 1)]),
+               eff=[AtConf(Q2), ~CanMove(), ~AtConf(Q)]),
 
-            Action(name='clean', param=[O, O2],  # Wirelessly communicates to clean
-                  pre=[Stackable(O, O2), Washer(O2),
-                       ~Cooked(O), On(O, O2)],
-                  eff=[Cleaned(O)]),
-
-            Action(name='cook', param=[O, O2],  # Wirelessly communicates to cook
-                  pre=[Stackable(O, O2), Stove(O2),
-                       Cleaned(O), On(O, O2)],
-                  eff=[Cooked(O), ~Cleaned(O)]),
-        ]
+            #Action(name='clean', param=[O, O2],  # Wirelessly communicates to clean
+            #      pre=[Stackable(O, O2), Washer(O2),
+            #           ~Cooked(O), On(O, O2)],
+            #      eff=[Cleaned(O)]),
+            #
+            #Action(name='cook', param=[O, O2],  # Wirelessly communicates to cook
+            #      pre=[Stackable(O, O2), Stove(O2),
+            #           Cleaned(O), On(O, O2)],
+            #      eff=[Cooked(O), ~Cleaned(O)]),
+    ]
 
     axioms = [
         Axiom(param=[O, G],
@@ -258,18 +264,18 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', movable_collisions=False
                  fn=get_motion_gen(tree, robot_id), out=[T],
                  graph=[IsMotion(Q, Q2, T), IsTraj(T)], bound=bound),
 
-        Stream(name='grasp', inp=[O], domain=[IsMovable(O)], fn=get_grasp_gen(tree, grasp_name),
-                   out=[G], graph=[ValidGrasp(O, G), IsGrasp(G)], bound=bound),
+        Stream(name='grasp', inp=[O], domain=[IsMovable(O)],
+               fn=get_grasp_gen(tree, grasp_name), out=[G],
+               graph=[ValidGrasp(O, G), IsGrasp(G)], bound=bound),
 
         # TODO: test_support
         Stream(name='support', inp=[O, O2], domain=[Stackable(O, O2)],
                fn=get_stable_gen(tree), out=[P],
-               graph=[ValidPose(O, P), IsSupported(P, O2), IsPose(P)], bound=bound),
+               graph=[IsPose(P), ValidPose(O, P), IsSupported(P, O2)], bound=bound),
 
         FnStream(name='ik', inp=[O, P, G], domain=[ValidPose(O, P), ValidGrasp(O, G)],
                   fn=get_ir_gen(tree, robot_id), out=[Q, T],
-                  graph=[IsKin(O, P, G, Q, T), IsConf(Q), IsTraj(T)],
-                  bound=bound),
+                  graph=[IsKin(O, P, G, Q, T), IsConf(Q), IsTraj(T)], bound=bound),
     ]
 
     return Problem(initial_atoms, goal_literals, actions, axioms, streams,
@@ -295,8 +301,8 @@ def main():
     ss_problem = ss_from_problem(tree, q0, robot)
     print(ss_problem)
 
-    #plan, evaluations = dual_focused(ss_problem)
-    plan, evaluations = incremental(ss_problem)
+    plan, evaluations = dual_focused(ss_problem)
+    #plan, evaluations = incremental(ss_problem, verbose=True)
     print(plan)
 
 
