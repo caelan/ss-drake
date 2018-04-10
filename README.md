@@ -14,6 +14,9 @@ Download the most recent drake precompiled binaries (http://drake.mit.edu/from_b
 #### OS X
 
 ```
+brew tap robotlocomotion/director
+brew update
+brew upgrade
 wget https://drake-packages.csail.mit.edu/drake/nightly/drake-latest-mac.tar.gz
 tar -xvf drake-latest-mac.tar.gz
 export PYTHONPATH=${PWD}/drake/lib/python2.7/site-packages:${PYTHONPATH}
