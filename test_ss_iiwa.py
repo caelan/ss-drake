@@ -57,6 +57,7 @@ IsSupported = Predicate([P, O2])
 ValidGrasp = Predicate([O, G])
 IsKin = Predicate([O, P, G, Q, T])
 IsMotion = Predicate([Q, Q2, T])
+IsHoldingMotion = Predicate([Q, Q2, O, G, T])
 
 AtPose = Predicate([O, P])
 AtConf = Predicate([Q])
@@ -169,8 +170,8 @@ def get_ik_fn(tree, robot_id, fixed_ids=[], debug=True):
     q_default = Conf(tree)
     arm_ids = get_model_position_ids(tree, robot_id)
     model_ids = ([robot_id] + fixed_ids)
+    gripper_id = get_body_from_name(tree, KUKA_TOOL_FRAME, robot_id).get_body_index()
     def fn(model, pose, grasp):
-        gripper_id = get_body_from_name(tree, KUKA_TOOL_FRAME, robot_id).get_body_index()
         gripper_pose = gripper_from_object(pose.values, grasp.grasp_pose)
         approach_pose = multiply_poses(grasp.approach_pose, gripper_pose)
         q_approach = inverse_kinematics(tree, gripper_id, approach_pose, position_ids=arm_ids)
@@ -194,7 +195,6 @@ def get_ik_fn(tree, robot_id, fixed_ids=[], debug=True):
     return fn
 
 def get_motion_gen(tree, robot_id, fixed_ids=[], debug=True):
-    #arm_ids = get_model_position_ids(tree, robot_id)
     model_ids = ([robot_id] + fixed_ids)
     def fn(conf1, conf2):
         assert(conf1.positions == conf2.positions)
@@ -210,7 +210,35 @@ def get_motion_gen(tree, robot_id, fixed_ids=[], debug=True):
         return (command,)
     return fn
 
-def ss_from_problem(tree, q0, robot_id, bound='unique', debug=False, movable_collisions=False, grasp_name='top'):
+def get_holding_motion_gen(tree, robot_id, fixed_ids=[], debug=True):
+    model_ids = ([robot_id] + fixed_ids)
+    gripper_id = get_body_from_name(tree, KUKA_TOOL_FRAME, robot_id).get_body_index()
+    def fn(conf1, conf2, model, grasp):
+        assert(conf1.positions == conf2.positions)
+        holding_info = HoldingInfo(gripper_id, grasp.grasp_pose, model)
+        if debug:
+            sequence = [conf1.values, conf2.values]
+        else:
+            q = Conf(tree)
+            conf1.assign(q)
+            sequence = plan_motion(tree, q, conf2.positions, conf2.values, model_ids=model_ids)
+            if sequence is None:
+                return None
+        command = Command([PartialPath(tree, conf2.positions, sequence, holding=[holding_info])])
+        return (command,)
+    return fn
+
+
+def get_movable_collision_test(tree):
+    def test(command, model, pose):
+        for partial_path in command.partial_paths:
+            if any(info.model_id == model for info in partial_path.holding):
+                continue # Cannot collide with itself
+        return False
+    return test
+
+
+def ss_from_problem(tree, q0, robot_id, bound='shared', debug=False, movable_collisions=False, grasp_name='top'):
     #robot = problem.robot
     models = range(get_num_models(tree))
     movable = filter(lambda m: (m != robot_id) and has_pose(tree, m), models)
@@ -258,8 +286,8 @@ def ss_from_problem(tree, q0, robot_id, bound='unique', debug=False, movable_col
     #GraspedCollision = Predicate([A, G, AT], domain=[IsArm(A), POSE(G), IsArmTraj(AT)],
     #                             fn=lambda a, p, at: False, bound=False)
 
-    PlacedCollision = Predicate([T, P], domain=[IsTraj(T), IsPose(P)],
-                                fn=lambda at, p: False,
+    PlacedCollision = Predicate([T, O, P], domain=[IsTraj(T), ValidPose(O, P)],
+                                fn=get_movable_collision_test(tree),
                                 bound=False)
 
     actions = [
@@ -273,9 +301,15 @@ def ss_from_problem(tree, q0, robot_id, bound='unique', debug=False, movable_col
                     HasGrasp(O, G), AtConf(Q), ~Unsafe(T)],
                eff=[HandEmpty(), CanMove(), AtPose(O, P), ~HasGrasp(O, G)]),
 
-        Action(name='move', param=[Q, Q2, T],
+        # Can just do move if we check holding collisions
+        Action(name='move_free', param=[Q, Q2, T],
                pre=[IsMotion(Q, Q2, T),
-                    CanMove(), AtConf(Q), ~Unsafe(T)],
+                    HandEmpty(), CanMove(), AtConf(Q), ~Unsafe(T)],
+               eff=[AtConf(Q2), ~CanMove(), ~AtConf(Q)]),
+
+        Action(name='move_holding', param=[Q, Q2, O, G, T],
+               pre=[IsHoldingMotion(Q, Q2, O, G, T),
+                    HasGrasp(O, G), CanMove(), AtConf(Q), ~Unsafe(T)],
                eff=[AtConf(Q2), ~CanMove(), ~AtConf(Q)]),
 
         Action(name='clean', param=[O, O2],  # Wirelessly communicates to clean
@@ -321,9 +355,13 @@ def ss_from_problem(tree, q0, robot_id, bound='unique', debug=False, movable_col
                   fn=get_ik_fn(tree, robot_id, fixed_ids=fixed_models, debug=debug), out=[Q, T],
                   graph=[IsKin(O, P, G, Q, T), IsConf(Q), IsTraj(T)], bound=bound),
 
-        FnStream(name='motion', inp=[Q, Q2], domain=[IsConf(Q), IsConf(Q2)],
+        FnStream(name='free_motion', inp=[Q, Q2], domain=[IsConf(Q), IsConf(Q2)],
                  fn=get_motion_gen(tree, robot_id, debug=debug), out=[T],
                  graph=[IsMotion(Q, Q2, T), IsTraj(T)], bound=bound),
+    
+        FnStream(name='holding_motion', inp=[Q, Q2, O, G], domain=[IsConf(Q), IsConf(Q2), ValidGrasp(O, G)],
+             fn=get_holding_motion_gen(tree, robot_id, debug=debug), out=[T],
+             graph=[IsHoldingMotion(Q, Q2, O, G, T), IsTraj(T)], bound=bound),
     ]
 
     return Problem(initial_atoms, goal_literals, actions, axioms, streams,
