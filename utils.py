@@ -183,9 +183,6 @@ def has_position_name(tree, position_name, model_id=-1):
 def has_position_names(tree, position_names, model_id=-1):
     return any(has_position_name(tree, position_name, model_id) for position_name in position_names)
 
-def is_fixed_base(tree, model_id):
-    return not has_position_names(tree, POSE_POSITIONS, model_id)
-
 def wrap_position(tree, position_id, value, revolute_names=set()):
     if get_position_name(tree, position_id) in revolute_names:
         return wrap_angle(value)
@@ -243,9 +240,8 @@ def get_model_name(tree, model_id):
     #return str(get_base_body(tree, model_id).get_model_name())
     return get_base_body(tree, model_id).get_model_name()
 
-#def is_fixed(tree, model_index):
-#    base_body = base_bodies_from_model_index(tree, model_index)[0]
-#    return base_body.IsRigidlyFixedToWorld()
+def is_fixed_model(tree, model_id):
+    return get_base_body(tree, model_id).IsRigidlyFixedToWorld()
 
 ##################################################
 
@@ -285,6 +281,11 @@ def set_max_positions(tree, q, position_ids):
 #
 #def set_positions(tree, q, model_id, position_names,values):
 #    q[get_position_ids(tree, POSE_POSITIONS, model_id)] = values
+
+##################################################
+
+def has_pose(tree, model_id):
+    return has_position_names(tree, POSE_POSITIONS, model_id)
 
 def set_pose(tree, q, model_id, values):
     q[get_position_ids(tree, POSE_POSITIONS, model_id)] = values
