@@ -159,30 +159,30 @@ def get_stable_gen(tree):
     return gen
 
 def get_ik_fn(tree, robot_id, fixed_ids=[], teleport=True):
-    q_default = Conf(tree)
-    arm_ids = get_model_position_ids(tree, robot_id)
+    #q_default = Conf(tree)
+    position_ids = get_model_position_ids(tree, robot_id)
     model_ids = ([robot_id] + fixed_ids)
     gripper_id = get_body_from_name(tree, KUKA_TOOL_FRAME, robot_id).get_body_index()
     def fn(model, pose, grasp):
         gripper_pose = gripper_from_object(pose.values, grasp.grasp_pose)
         approach_pose = multiply_poses(grasp.approach_pose, gripper_pose)
-        q_approach = inverse_kinematics(tree, gripper_id, approach_pose, position_ids=arm_ids)
+        q_approach = inverse_kinematics(tree, gripper_id, approach_pose, position_ids=position_ids)
         if (q_approach is None) or are_colliding(tree, tree.doKinematics(q_approach), model_ids=model_ids):
             return None
-        conf = PartialConf(tree, arm_ids, q_approach[arm_ids])
-        q_grasp = inverse_kinematics(tree, gripper_id, gripper_pose, position_ids=arm_ids, q_seed=q_approach)
+        conf = PartialConf(tree, position_ids, q_approach[position_ids])
+        q_grasp = inverse_kinematics(tree, gripper_id, gripper_pose, position_ids=position_ids, q_seed=q_approach)
         if (q_grasp is None) or are_colliding(tree, tree.doKinematics(q_grasp), model_ids=model_ids):
             return None
         holding_info = HoldingInfo(gripper_id, grasp.grasp_pose, model)
         if teleport:
-            sequence = [q_approach[arm_ids], q_grasp[arm_ids]]
+            sequence = [q_approach[position_ids], q_grasp[position_ids]]
         else:
-            sequence = plan_motion(tree, q_approach, arm_ids, q_grasp[arm_ids], model_ids=model_ids, linear_only=True)
+            sequence = plan_motion(tree, q_approach, position_ids, q_grasp[position_ids], model_ids=model_ids, linear_only=True)
             if sequence is None:
                 raw_input('Approach motion failed')
                 return None
-        command = Command([PartialPath(tree, arm_ids, sequence), 
-                        PartialPath(tree, arm_ids, sequence[::-1], holding=[holding_info])])
+        command = Command([PartialPath(tree, position_ids, sequence),
+                        PartialPath(tree, position_ids, sequence[::-1], holding=[holding_info])])
         return (conf, command)
         # TODO: holding collisions
     return fn
@@ -247,12 +247,12 @@ def ss_from_problem(tree, q0, robot_id, bound='shared',
     kin_cache = tree.doKinematics(q0)
     assert(not are_colliding(tree, kin_cache))
 
-    models = [m for m in range(get_num_models(tree)) if m != robot_id]
-    movable = filter(lambda m: has_pose(tree, m), models)
-    fixed_models = filter(lambda m: m not in movable, models)
+    rigid_ids = [m for m in range(get_num_models(tree)) if m != robot_id]
+    movable_ids = filter(lambda m: has_pose(tree, m), rigid_ids)
+    fixed_ids = filter(lambda m: m not in movable_ids, rigid_ids)
     print('Robot:', robot_id)
-    print('Movable:', movable)
-    print('Fixed:', fixed_models)
+    print('Movable:', movable_ids)
+    print('Fixed:', fixed_ids)
 
     robot_positions = get_model_position_ids(tree, robot_id)
     conf = PartialConf(tree, robot_positions, q0[robot_positions])
@@ -261,28 +261,28 @@ def ss_from_problem(tree, q0, robot_id, bound='shared',
         IsConf(conf), AtConf(conf),
         initialize(TotalCost(), 0),
     ]
-    for model in movable:
+    for model in movable_ids:
         model_positions = get_position_ids(tree, POSE_POSITIONS, model)
         pose = PartialConf(tree, model_positions, q0[model_positions])
         initial_atoms += [IsMovable(model), IsPose(model, pose), AtPose(model, pose)]
-        for surface in fixed_models:
+        for surface in fixed_ids:
             initial_atoms += [Stackable(model, surface)]
             if is_placement(tree, kin_cache, model, surface):
                 initial_atoms += [IsSupported(pose, surface)]
 
-    for model in models:
+    for model in rigid_ids:
         name = get_model_name(tree, model)
         if 'sink' in name:
             initial_atoms.append(Sink(model))
         if 'stove' in name:
             initial_atoms.append(Stove(model))
 
-    model = movable[0]
+    model = movable_ids[0]
     goal_literals = [
         AtConf(conf),
         #Holding(model),
-        #On(model, fixed_models[0]),
-        #On(model, fixed_models[2]),
+        #On(model, fixed_ids[0]),
+        #On(model, fixed_ids[2]),
         #Cleaned(model),
         Cooked(model),
     ]
@@ -353,7 +353,7 @@ def ss_from_problem(tree, q0, robot_id, bound='shared',
                   graph=[IsPose(O, P), IsSupported(P, O2)], bound=bound),
 
         FnStream(name='inverse_kin', inp=[O, P, G], domain=[IsPose(O, P), IsGrasp(O, G)],
-                 fn=get_ik_fn(tree, robot_id, fixed_ids=fixed_models, teleport=teleport), out=[Q, T],
+                 fn=get_ik_fn(tree, robot_id, fixed_ids=fixed_ids, teleport=teleport), out=[Q, T],
                  graph=[IsKin(O, P, G, Q, T), IsConf(Q), IsTraj(T)], bound=bound),
 
         FnStream(name='free_motion', inp=[Q, Q2], domain=[IsConf(Q), IsConf(Q2)],
