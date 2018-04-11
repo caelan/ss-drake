@@ -1,39 +1,25 @@
 #!/usr/bin/env python2.7
 
-import time
-import random
-import numpy as np
-
-from pr2_self_collision import PR2_COLLISION_PAIRS, INITIAL_COLLISION_PAIRS
-from utils import get_drake_file, get_enabled_collision_filter, \
-    get_disabled_collision_filter, add_model,get_position_name, DrakeVisualizerHelper, Conf, \
-    get_position_ids, get_position_limits, plan_motion, dump_tree, set_pose, sample_placement, are_colliding, get_body_from_name, \
-    get_model_position_ids, get_pose, multiply_poses, inverse_kinematics, get_world_pose, Pose, Point, set_min_positions, set_random_positions, \
-    set_max_positions, set_center_positions, get_num_models, is_fixed_model, has_pose, POSE_POSITIONS, stable_z, \
-    is_placement, get_model_name, get_position_bodies, get_refine_fn
-from pr2_utils import PR2_URDF, TABLE_SDF, PR2_GROUPS, PR2_LIMITS, REST_LEFT_ARM, \
-    rightarm_from_leftarm, open_pr2_gripper, get_pr2_limits, BLOCK_URDF, gripper_from_object, object_from_gripper, \
-    GraspInfo, get_top_grasps
-
-from test_kuka_iiwa import IIWA_URDF, SHORT_FLOOR_URDF, GRASP_NAMES, KUKA_TOOL_FRAME
-from test_pick import step_path, execute_path, convert_path
-from pydrake.multibody.rigid_body_tree import RigidBodyTree, AddFlatTerrainToWorld
-
-
+from pydrake.multibody.rigid_body_tree import RigidBodyTree
 from ss.algorithms.dual_focused import dual_focused
-from ss.algorithms.incremental import incremental
-from ss.model.functions import Predicate, NonNegFunction, rename_functions, initialize, TotalCost, Increase
-from ss.model.problem import Problem, get_length, get_cost
+from ss.model.functions import Predicate, rename_functions, initialize, TotalCost
 from ss.model.operators import Action, Axiom
-from ss.model.streams import Stream, ListStream, GenStream, FnStream, TestStream
 from ss.model.plan import print_plan
-from collections import namedtuple
+from ss.model.problem import Problem
+from ss.model.streams import GenStream, FnStream
 
-
-SINK_URDF = 'models/sink.urdf'
-STOVE_URDF = 'models/stove.urdf'
+from pr2_utils import BLOCK_URDF, gripper_from_object, object_from_gripper
+from test_kuka_iiwa import IIWA_URDF, SHORT_FLOOR_URDF, GRASP_NAMES, KUKA_TOOL_FRAME
+from utils import get_drake_file, add_model, DrakeVisualizerHelper, Conf, \
+    get_position_ids, plan_motion, dump_tree, set_pose, sample_placement, are_colliding, \
+    get_body_from_name, \
+    get_model_position_ids, multiply_poses, inverse_kinematics, get_world_pose, Pose, Point, \
+    get_num_models, has_pose, POSE_POSITIONS, stable_z, \
+    is_placement, get_model_name, get_position_bodies, get_refine_fn, SINK_URDF, STOVE_URDF, HoldingInfo
 
 # TODO: stacking
+
+#######################################################
 
 O = '?o'; O2 = '?o2'
 P = '?p'; P2 = '?p2'
@@ -48,16 +34,14 @@ Cooked = Predicate([O])
 Sink = Predicate([O])
 Stove = Predicate([O])
 
-IsPose = Predicate([P])
-IsGrasp = Predicate([G])
+IsPose = Predicate([O, P])
+IsGrasp = Predicate([O, G])
 IsConf = Predicate([Q])
 IsTraj = Predicate([T])
 
-ValidPose = Predicate([O, P])
 IsSupported = Predicate([P, O2])
-ValidGrasp = Predicate([O, G])
 IsKin = Predicate([O, P, G, Q, T])
-IsMotion = Predicate([Q, Q2, T])
+IsFreeMotion = Predicate([Q, Q2, T])
 IsHoldingMotion = Predicate([Q, Q2, O, G, T])
 
 AtPose = Predicate([O, P])
@@ -70,11 +54,9 @@ Holding = Predicate([O])
 On = Predicate([O, O2])
 Unsafe = Predicate([T])
 
-#IsButton = Predicate([O])
-#IsPress = Predicate([A, B, BQ, AT])
-#IsConnected = Predicate([O, O2])
-
 rename_functions(locals())
+
+#######################################################
 
 class Grasp(object):
     def __init__(self, model, grasp_pose, approach_pose):
@@ -94,8 +76,6 @@ class PartialConf(object):
     def __repr__(self):
         return 'q{}'.format(id(self) % 1000)
 
-HoldingInfo = namedtuple('HoldingInfo', ['body_id', 'grasp_pose', 'model_id'])
-
 class PartialPath(object):
     def __init__(self, tree, positions, sequence, holding=[]):
         self.tree = tree
@@ -107,8 +87,8 @@ class PartialPath(object):
         actuated_ids = [body.get_model_instance_id() for body in controlled_bodies]
         holding_ids = [info.model_id for info in self.holding]
         return list(set(actuated_ids + holding_ids))
-    def partial_confs(self): # TODO: holding
-        return [PartialConf(self.tree, self.positions, values) for values in self.path]
+    #def partial_confs(self): # TODO: holding
+    #    return [PartialConf(self.tree, self.positions, values) for values in self.sequence]
     def full_path(self, q0=None):
         if q0 is None:
             q0 = Conf(self.tree)
@@ -139,10 +119,6 @@ class Command(object):
     def __init__(self, partial_paths):
         self.partial_paths = partial_paths
     def full_path(self, q0=None):
-        #new_path = []
-        #for partial_path in self.partial_paths:
-        #    new_path += partial_path.full_path(q0)
-        #    q0 = new_path[-1]
         if q0 is None:
             q0 = Conf(self.tree)
         new_path = [q0]
@@ -155,6 +131,8 @@ class Command(object):
         return self.__class__([partial_path.reverse() for partial_path in reversed(self.partial_paths)])
     def __repr__(self):
         return 'c{}'.format(id(self) % 1000)
+
+#######################################################
 
 def get_grasp_gen(tree, grasp_name):
     grasp_info = GRASP_NAMES[grasp_name]
@@ -262,8 +240,10 @@ def get_movable_collision_test(tree):
         return False
     return test
 
+#######################################################
 
-def ss_from_problem(tree, q0, robot_id, bound='shared', teleport=False, movable_collisions=False, grasp_name='top'):
+def ss_from_problem(tree, q0, robot_id, bound='shared',
+                    teleport=False, movable_collisions=False, grasp_name='top'):
     kin_cache = tree.doKinematics(q0)
     assert(not are_colliding(tree, kin_cache))
 
@@ -284,8 +264,7 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', teleport=False, movable_
     for model in movable:
         model_positions = get_position_ids(tree, POSE_POSITIONS, model)
         pose = PartialConf(tree, model_positions, q0[model_positions])
-        initial_atoms += [IsMovable(model), IsPose(pose),
-                          ValidPose(model, pose), AtPose(model, pose)]
+        initial_atoms += [IsMovable(model), IsPose(model, pose), AtPose(model, pose)]
         for surface in fixed_models:
             initial_atoms += [Stackable(model, surface)]
             if is_placement(tree, kin_cache, model, surface):
@@ -308,7 +287,7 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', teleport=False, movable_
         Cooked(model),
     ]
  
-    PlacedCollision = Predicate([T, O, P], domain=[IsTraj(T), ValidPose(O, P)],
+    PlacedCollision = Predicate([T, O, P], domain=[IsTraj(T), IsPose(O, P)],
                                 fn=get_movable_collision_test(tree),
                                 bound=False)
 
@@ -325,7 +304,7 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', teleport=False, movable_
 
         # Can just do move if we check holding collisions
         Action(name='move_free', param=[Q, Q2, T],
-               pre=[IsMotion(Q, Q2, T),
+               pre=[IsFreeMotion(Q, Q2, T),
                     HandEmpty(), CanMove(), AtConf(Q), ~Unsafe(T)],
                eff=[AtConf(Q2), ~CanMove(), ~AtConf(Q)]),
 
@@ -347,48 +326,49 @@ def ss_from_problem(tree, q0, robot_id, bound='shared', teleport=False, movable_
 
     axioms = [
         Axiom(param=[O, G],
-              pre=[ValidGrasp(O, G),
+              pre=[IsGrasp(O, G),
                    HasGrasp(O, G)],
               eff=Holding(O)),
         Axiom(param=[O, P, O2],
-              pre=[ValidPose(O, P), IsSupported(P, O2),
+              pre=[IsPose(O, P), IsSupported(P, O2),
                    AtPose(O, P)],
               eff=On(O, O2)),
     ]
     if movable_collisions:
         axioms += [
             Axiom(param=[T, O, P],
-                  pre=[ValidPose(O, P), PlacedCollision(T, O, P),
+                  pre=[IsPose(O, P), PlacedCollision(T, O, P),
                        AtPose(O, P)],
                   eff=Unsafe(T)),
         ]
 
     streams = [
         GenStream(name='grasp', inp=[O], domain=[IsMovable(O)],
-               fn=get_grasp_gen(tree, grasp_name), out=[G],
-               graph=[ValidGrasp(O, G), IsGrasp(G)], bound=bound),
+                  fn=get_grasp_gen(tree, grasp_name), out=[G],
+                  graph=[IsGrasp(O, G)], bound=bound),
 
         # TODO: test_support
         GenStream(name='support', inp=[O, O2], domain=[Stackable(O, O2)],
-               fn=get_stable_gen(tree), out=[P],
-               graph=[IsPose(P), ValidPose(O, P), IsSupported(P, O2)], bound=bound),
+                  fn=get_stable_gen(tree), out=[P],
+                  graph=[IsPose(O, P), IsSupported(P, O2)], bound=bound),
 
-        FnStream(name='ik', inp=[O, P, G], domain=[ValidPose(O, P), ValidGrasp(O, G)],
-                  fn=get_ik_fn(tree, robot_id, fixed_ids=fixed_models, teleport=teleport), out=[Q, T],
-                  graph=[IsKin(O, P, G, Q, T), IsConf(Q), IsTraj(T)], bound=bound),
+        FnStream(name='inverse_kin', inp=[O, P, G], domain=[IsPose(O, P), IsGrasp(O, G)],
+                 fn=get_ik_fn(tree, robot_id, fixed_ids=fixed_models, teleport=teleport), out=[Q, T],
+                 graph=[IsKin(O, P, G, Q, T), IsConf(Q), IsTraj(T)], bound=bound),
 
         FnStream(name='free_motion', inp=[Q, Q2], domain=[IsConf(Q), IsConf(Q2)],
                  fn=get_motion_gen(tree, robot_id, teleport=teleport), out=[T],
-                 graph=[IsMotion(Q, Q2, T), IsTraj(T)], bound=bound),
+                 graph=[IsFreeMotion(Q, Q2, T), IsTraj(T)], bound=bound),
     
-        FnStream(name='holding_motion', inp=[Q, Q2, O, G], domain=[IsConf(Q), IsConf(Q2), ValidGrasp(O, G)],
-             fn=get_holding_motion_gen(tree, robot_id, teleport=teleport), out=[T],
-             graph=[IsHoldingMotion(Q, Q2, O, G, T), IsTraj(T)], bound=bound),
+        FnStream(name='holding_motion', inp=[Q, Q2, O, G], domain=[IsConf(Q), IsConf(Q2), IsGrasp(O, G)],
+                 fn=get_holding_motion_gen(tree, robot_id, teleport=teleport), out=[T],
+                 graph=[IsHoldingMotion(Q, Q2, O, G, T), IsTraj(T)], bound=bound),
     ]
 
     return Problem(initial_atoms, goal_literals, actions, axioms, streams,
                    objective=TotalCost())
 
+#######################################################
 
 def main():
     tree = RigidBodyTree()

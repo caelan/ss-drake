@@ -2,6 +2,8 @@ from __future__ import absolute_import, division, print_function
 
 import os
 import re
+from collections import namedtuple
+
 import numpy as np
 import pydrake
 import time
@@ -713,3 +715,8 @@ def dump_tree(tree):
             get_min_position(tree, position_id), get_max_position(tree, position_id))
 
     print("Actuators:", tree.get_num_actuators())
+
+
+SINK_URDF = 'models/sink.urdf'
+STOVE_URDF = 'models/stove.urdf'
+HoldingInfo = namedtuple('HoldingInfo', ['body_id', 'grasp_pose', 'model_id'])
