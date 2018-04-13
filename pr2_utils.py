@@ -1,3 +1,4 @@
+import re
 from collections import namedtuple
 
 import numpy as np
@@ -158,3 +159,12 @@ def open_pr2_gripper(tree, q, model_id, gripper_name):
 
 def close_pr2_gripper(tree, q, model_id, gripper_name):
     set_min_positions(tree, q, get_position_ids(tree, PR2_GROUPS[gripper_name], model_id))
+
+
+def load_disabled_collisions(srdf_file):
+    srdf_string = open(srdf_file).read()
+    regex = r'<\s*disable_collisions\s+link1="(\w+)"\s+link2="(\w+)"\s+reason="(\w+)"\s*/>'
+    disabled_collisions = set()
+    for link1, link2, reason in re.findall(regex, srdf_string):
+        disabled_collisions.update([(link1, link2), (link2, link1)])
+    return disabled_collisions

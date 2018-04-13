@@ -1,13 +1,11 @@
 from __future__ import absolute_import, division, print_function
 
 import os
-import re
+import time
 from collections import namedtuple
 
 import numpy as np
 import pydrake
-import time
-
 from motion_planners.rrt_connect import birrt, direct_path
 from pydrake.lcm import DrakeLcm
 from pydrake.multibody.parsers import PackageMap
@@ -342,13 +340,6 @@ def add_model(tree, model_file, pose=None, fixed_base=True):
     model_index = tree.get_num_model_instances() - 1
     return model_index
 
-def load_disabled_collisions(srdf_file):
-    srdf_string = open(srdf_file).read()
-    regex = r'<\s*disable_collisions\s+link1="(\w+)"\s+link2="(\w+)"\s+reason="(\w+)"\s*/>'
-    disabled_collisions = set()
-    for link1, link2, reason in re.findall(regex, srdf_string):
-        disabled_collisions.update([(link1, link2), (link2, link1)])
-    return disabled_collisions
 
 ##################################################
 
@@ -598,7 +589,6 @@ def get_extend_fn(position_ids, resolutions=None):
     difference_fn = get_difference_fn(position_ids)
     def fn(q1, q2):
         steps = np.abs(np.divide(difference_fn(q2, q1), resolutions))
-        num_steps = int(np.max(steps)) + 1
         refine_fn = get_refine_fn(position_ids, num_steps=int(np.max(steps)))
         return refine_fn(q1, q2)
     return fn
